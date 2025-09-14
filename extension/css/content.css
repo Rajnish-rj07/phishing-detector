@@ -1,0 +1,184 @@
+
+/* Phishing Shield Warning Banner Styles */
+
+#phishing-shield-warning {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  z-index: 2147483647 !important; /* Maximum z-index */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 14px !important;
+  line-height: 1.4 !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
+  animation: slideDown 0.3s ease-out !important;
+}
+
+@keyframes slideDown {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}
+
+.phishing-shield-banner {
+  background: linear-gradient(135deg, #ff4444, #cc0000) !important;
+  color: white !important;
+  border: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.warning-content {
+  max-width: 1200px !important;
+  margin: 0 auto !important;
+  padding: 16px 20px !important;
+}
+
+.warning-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  margin-bottom: 12px !important;
+}
+
+.warning-icon {
+  font-size: 24px !important;
+  margin-right: 12px !important;
+  flex-shrink: 0 !important;
+}
+
+.warning-title {
+  flex-grow: 1 !important;
+  font-size: 18px !important;
+  font-weight: bold !important;
+  color: white !important;
+}
+
+.close-btn {
+  background: rgba(255,255,255,0.2) !important;
+  border: 1px solid rgba(255,255,255,0.3) !important;
+  color: white !important;
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 50% !important;
+  font-size: 18px !important;
+  font-weight: bold !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: background 0.2s !important;
+}
+
+.close-btn:hover {
+  background: rgba(255,255,255,0.3) !important;
+}
+
+.warning-body p {
+  margin: 0 0 12px 0 !important;
+  font-size: 16px !important;
+  font-weight: 500 !important;
+  color: white !important;
+}
+
+.warning-details {
+  display: flex !important;
+  gap: 20px !important;
+  margin-bottom: 16px !important;
+  flex-wrap: wrap !important;
+}
+
+.detail-item {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.detail-item .label {
+  font-weight: 500 !important;
+  color: rgba(255,255,255,0.9) !important;
+}
+
+.detail-item .value {
+  font-weight: bold !important;
+  color: white !important;
+  padding: 2px 8px !important;
+  background: rgba(255,255,255,0.2) !important;
+  border-radius: 12px !important;
+  font-size: 13px !important;
+}
+
+.risk-high { background: rgba(255,255,255,0.3) !important; }
+.risk-medium { background: rgba(255,200,0,0.8) !important; color: black !important; }
+.risk-low { background: rgba(255,255,0,0.8) !important; color: black !important; }
+
+.warning-actions {
+  display: flex !important;
+  gap: 12px !important;
+  flex-wrap: wrap !important;
+}
+
+.warning-actions button {
+  padding: 10px 20px !important;
+  border: none !important;
+  border-radius: 6px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: all 0.2s !important;
+  font-size: 14px !important;
+  text-decoration: none !important;
+}
+
+.btn-danger {
+  background: #ffffff !important;
+  color: #cc0000 !important;
+  border: 2px solid white !important;
+}
+
+.btn-danger:hover {
+  background: #f0f0f0 !important;
+  transform: translateY(-1px) !important;
+}
+
+.btn-secondary {
+  background: rgba(255,255,255,0.2) !important;
+  color: white !important;
+  border: 1px solid rgba(255,255,255,0.4) !important;
+}
+
+.btn-secondary:hover {
+  background: rgba(255,255,255,0.3) !important;
+}
+
+.btn-primary {
+  background: #2196F3 !important;
+  color: white !important;
+}
+
+.btn-primary:hover {
+  background: #1976D2 !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .warning-content {
+    padding: 12px 16px !important;
+  }
+
+  .warning-title {
+    font-size: 16px !important;
+  }
+
+  .warning-details {
+    flex-direction: column !important;
+    gap: 8px !important;
+  }
+
+  .warning-actions {
+    flex-direction: column !important;
+  }
+
+  .warning-actions button {
+    width: 100% !important;
+  }
+}
