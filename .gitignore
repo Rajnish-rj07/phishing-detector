@@ -9,7 +9,6 @@ env/
 .env
 
 # Models and Data (optional - you might want to include these)
-models/*.pkl
 data/*.csv
 
 # IDE
