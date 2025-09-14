@@ -1,7 +1,8 @@
 
 // Background Service Worker for Phishing Shield Extension
 
-const API_URL = 'http://localhost:5000';  // Change this to your deployed API URL
+const API_URL = 'https://phishing-detector-4-vele.onrender.com';
+ // Change this to your deployed API URL
 const CACHE_DURATION = 5 * 60 * 1000;    // 5 minutes cache
 
 class PhishingDetectionService {
