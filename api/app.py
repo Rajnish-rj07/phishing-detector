@@ -11,7 +11,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from src.feature_extractor import URLFeatureExtractor
 
 # Load the pipeline
-PIPELINE_PATH = os.path.join('..','models','phishing_pipeline.pkl')
+import os
+PIPELINE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_pipeline.pkl'))
+
 with open(PIPELINE_PATH, 'rb') as f:
     pkg = pickle.load(f)
 

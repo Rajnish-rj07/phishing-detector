@@ -8,9 +8,6 @@ venv/
 env/
 .env
 
-# Models and Data (optional - you might want to include these)
-data/*.csv
-
 # IDE
 .vscode/
 .idea/
