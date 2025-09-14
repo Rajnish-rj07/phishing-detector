@@ -9,8 +9,8 @@ RUN pip install --upgrade pip setuptools wheel
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
-RUN ls -l /app/models && ls -l /app/api
 
+COPY models/ models/
 
 COPY . .
 
