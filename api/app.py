@@ -132,7 +132,9 @@ def batch_predict():
         'results': records
     }), 200
 
-
+@app.route("/", methods=["GET"])
+def index():
+    return "Phishing Detection API is running!", 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
