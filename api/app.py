@@ -1,140 +1,224 @@
-import os
-import pickle
-import pandas as pd
 from flask import Flask, request, jsonify
-
-
-# Ensure your project root is on PYTHONPATH
-import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-
-# Import the same extractor used in training
-from src.feature_extractor import URLFeatureExtractor
-
-# Load the pipeline
+from flask_cors import CORS
+import pandas as pd
+import numpy as np
 import os
-PIPELINE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_pipeline.pkl'))
+import logging
+from datetime import datetime, timedelta
 
-with open(PIPELINE_PATH, 'rb') as f:
-    pkg = pickle.load(f)
-
-model       = pkg['model']
-scaler_std  = pkg['scaler_std']
-scaler_mm   = pkg['scaler_mm']
-selector    = pkg['selector']
-model_name  = pkg.get('model_name', 'Unknown')
-best_score  = pkg.get('accuracy', 'Unknown')
-train_date  = pkg.get('timestamp', 'Unknown')
-
-# Initialize feature extractor
-extractor = URLFeatureExtractor()
+# Import your enhanced modules
+import sys
+sys.path.append('..')
+from src.feature_extractor import EnhancedURLFeatureExtractor
+from src.online_model import OnlineLearningModel
+from src.data_collector import RealTimeDataCollector
 
 app = Flask(__name__)
+CORS(app)
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+
+# Initialize components
+try:
+    extractor = EnhancedURLFeatureExtractor()
+    model = OnlineLearningModel()
+    data_collector = RealTimeDataCollector()
+    
+    # Try to load existing model, otherwise train new one
+    if not model.load_model():
+        logging.info("No existing model found, performing initial training...")
+        # Get initial training data
+        df = data_collector.get_recent_data(hours=168)  # Last week
+        if len(df) > 100:
+            # Extract features for training data
+            X_train = []
+            for url in df['url']:
+                try:
+                    features = extractor.extract_all_features(url)
+                    X_train.append(features)
+                except Exception as e:
+                    logging.error(f"Error extracting features for {url}: {e}")
+            
+            if X_train:
+                X_train_df = pd.DataFrame(X_train)
+                X_train_df = X_train_df.fillna(0)  # Handle missing values
+                
+                model.initial_training(
+                    X_train_df.values, 
+                    df['label'].values, 
+                    X_train_df.columns.tolist()
+                )
+    
+    logging.info("Model and components initialized successfully")
+    
+except Exception as e:
+    logging.error(f"Error initializing components: {e}")
+    # Fallback to basic functionality
+
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({
+        "message": "Real-Time Phishing Detection API",
+        "version": "2.0",
+        "endpoints": ["/health", "/predict", "/batch-predict", "/update-model", "/stats"]
+    })
 
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({
-        'status': 'healthy',
-        'model_loaded': True,
-        'feature_extractor_loaded': True,
-        'timestamp': pd.Timestamp.now().isoformat()
-    })
-
-@app.route('/model-info', methods=['GET'])
-def model_info():
-    return jsonify({
-        'model_name': model_name,
-        'best_score': best_score,
-        'training_date': train_date,
-        'timestamp': pd.Timestamp.now().isoformat()
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "model_loaded": model.is_fitted if 'model' in globals() else False,
+        "last_update": model.performance_history[-1]['timestamp'].isoformat() if model.performance_history else None
     })
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    data = request.get_json() or {}
-    url  = data.get('url','').strip()
-    if not url:
-        return jsonify({'error': 'Missing or empty URL'}), 400
-
-    # Extract exactly the same features as during training
-    features_dict = extractor.extract_all_features(url)
-    df_features  = pd.DataFrame([features_dict])
-
     try:
-        # Preprocess with the saved scalers and selector
-        X_std = scaler_std.transform(df_features)
-        X_mm  = scaler_mm.transform(X_std)
-        X_sel = selector.transform(X_mm)
-
-        # Predict
-        pred   = model.predict(X_sel)[0]
-        proba  = model.predict_proba(X_sel)[0]
-        conf   = float(proba.max())
-        p_legit = float(proba[0])
-        p_phish = float(proba[1])
-
-        # Define risk levels
-        if p_phish >= 0.8:
-            risk = 'HIGH'
-        elif p_phish >= 0.6:
-            risk = 'MEDIUM'
-        elif p_phish >= 0.4:
-            risk = 'LOW'
-        else:
-            risk = 'VERY_LOW'
-
+        data = request.get_json()
+        url = data.get('url')
+        
+        if not url:
+            return jsonify({'error': 'URL is required'}), 400
+        
+        # Extract enhanced features
+        features = extractor.extract_all_features(url)
+        logging.info(f"Extracted features for {url}: {len(features)} features")
+        
+        # Convert to DataFrame
+        df = pd.DataFrame([features])
+        df = df.fillna(0)
+        
+        # Make prediction
+        probabilities = model.predict_proba(df)[0]
+        prediction = int(probabilities[1] > 0.5)
+        
+        # Enhanced risk assessment
+        risk_level = "VERY_LOW"
+        if probabilities[1] > 0.8:
+            risk_level = "VERY_HIGH"
+        elif probabilities[1] > 0.6:
+            risk_level = "HIGH"
+        elif probabilities[1] > 0.4:
+            risk_level = "MODERATE"
+        elif probabilities[1] > 0.2:
+            risk_level = "LOW"
+        
         return jsonify({
             'url': url,
-            'prediction': int(pred),
-            'prediction_label': 'Phishing' if pred == 1 else 'Legitimate',
-            'confidence': conf,
-            'probability_legitimate': p_legit,
-            'probability_phishing': p_phish,
-            'risk_level': risk,
-            'timestamp': pd.Timestamp.now().isoformat()
+            'prediction': prediction,
+            'prediction_label': 'Phishing' if prediction == 1 else 'Legitimate',
+            'probability_legitimate': float(probabilities[0]),
+            'probability_phishing': float(probabilities[1]),
+            'risk_level': risk_level,
+            'confidence': float(max(probabilities)),
+            'features_analyzed': len(features),
+            'reputation_score': features.get('reputation_score', 0.5),
+            'timestamp': datetime.now().isoformat()
         })
-
-    except Exception as e:
-        return jsonify({'error': f'Prediction failed: {str(e)}'}), 500
     
+    except Exception as e:
+        logging.error(f"Prediction error for {url}: {e}")
+        return jsonify({
+            'error': f'Prediction failed: {str(e)}',
+            'url': url
+        }), 500
+
 @app.route('/batch-predict', methods=['POST'])
 def batch_predict():
-    payload = request.get_json() or {}
-    urls = payload.get('urls')
-    if not isinstance(urls, list) or not urls:
-        return jsonify({'error': 'Missing or invalid `urls` list'}), 400
+    try:
+        data = request.get_json()
+        urls = data.get('urls', [])
+        
+        if not urls or not isinstance(urls, list):
+            return jsonify({'error': 'URLs list is required'}), 400
+        
+        results = []
+        
+        for url in urls:
+            try:
+                features = extractor.extract_all_features(url)
+                df = pd.DataFrame([features]).fillna(0)
+                
+                probabilities = model.predict_proba(df)[0]
+                prediction = int(probabilities[1] > 0.5)
+                
+                results.append({
+                    'url': url,
+                    'prediction': prediction,
+                    'probability_legitimate': float(probabilities[0]),
+                    'probability_phishing': float(probabilities[1]),
+                    'risk_level': 'HIGH' if probabilities[1] > 0.6 else 'LOW'
+                })
+                
+            except Exception as e:
+                results.append({
+                    'url': url,
+                    'error': f'Analysis failed: {str(e)}'
+                })
+        
+        return jsonify({
+            'count': len(results),
+            'results': results,
+            'timestamp': datetime.now().isoformat()
+        })
+    
+    except Exception as e:
+        logging.error(f"Batch prediction error: {e}")
+        return jsonify({'error': f'Batch prediction failed: {str(e)}'}), 500
 
-    records = []
-    for url in urls:
-        url_str = str(url).strip()
-        feats = extractor.extract_all_features(url_str)
-        df = pd.DataFrame([feats])
-        try:
-            X_std = scaler_std.transform(df)
-            X_mm  = scaler_mm.transform(X_std)
-            X_sel = selector.transform(X_mm)
-            pred = model.predict(X_sel)[0]
-            proba = model.predict_proba(X_sel)[0]
-            records.append({
-                'url': url_str,
-                'prediction': int(pred),
-                'probability_legitimate': float(proba[0]),
-                'probability_phishing': float(proba[1])
-            })
-        except Exception as e:
-            records.append({
-                'url': url_str,
-                'error': f'Prediction failed: {str(e)}'
-            })
+@app.route('/update-model', methods=['POST'])
+def update_model():
+    """Trigger model update with latest threat data"""
+    try:
+        # Collect latest data
+        logging.info("Updating model with latest threat data...")
+        data_collector.update_threat_database()
+        
+        # Get recent data for incremental learning
+        df = data_collector.get_recent_data(hours=24)
+        
+        if len(df) > 10:  # Minimum samples for update
+            X_new = []
+            for url in df['url']:
+                try:
+                    features = extractor.extract_all_features(url)
+                    X_new.append(features)
+                except:
+                    continue
+            
+            if X_new:
+                X_new_df = pd.DataFrame(X_new).fillna(0)
+                model.incremental_update(X_new_df.values, df['label'].values)
+                
+                return jsonify({
+                    'message': 'Model updated successfully',
+                    'samples_processed': len(X_new),
+                    'timestamp': datetime.now().isoformat()
+                })
+        
+        return jsonify({
+            'message': 'No new samples available for update',
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logging.error(f"Model update error: {e}")
+        return jsonify({'error': f'Model update failed: {str(e)}'}), 500
 
-    return jsonify({
-        'count': len(records),
-        'results': records
-    }), 200
-
-@app.route("/", methods=["GET"])
-def index():
-    return "Phishing Detection API is running!", 200
+@app.route('/stats', methods=['GET'])
+def stats():
+    """Get model performance statistics"""
+    try:
+        return jsonify({
+            'model_fitted': model.is_fitted,
+            'feature_count': len(model.feature_names) if model.feature_names else 0,
+            'performance_history': model.performance_history[-10:],  # Last 10 updates
+            'last_updated': model.performance_history[-1]['timestamp'].isoformat() if model.performance_history else None
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=False)
