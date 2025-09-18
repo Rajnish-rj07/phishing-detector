@@ -48,3 +48,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // Keep message channel open for async response
   }
 });
+// Add this to your background.js for testing
+const TEST_MODE = true; // Set to false for production
+
+if (TEST_MODE && request.action === 'checkURL') {
+  // Return mock response for testing
+  const mockResponse = {
+    url: request.url,
+    isPhishing: request.url.includes('phishing') || request.url.includes('login'),
+    riskLevel: 'HIGH',
+    confidence: 85,
+    probabilityPhishing: 85,
+    probabilityLegitimate: 15
+  };
+  
+  setTimeout(() => sendResponse(mockResponse), 1000);
+  return true;
+}
