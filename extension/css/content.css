@@ -7,11 +7,15 @@
   left: 0 !important;
   width: 100% !important;
   z-index: 2147483647 !important; /* Maximum z-index */
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-family: 'Segoe UI', Arial, sans-serif !important;
   font-size: 14px !important;
-  line-height: 1.4 !important;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
-  animation: slideDown 0.3s ease-out !important;
+  line-height: 1.5 !important;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.3) !important;
+  animation: slideDown 0.5s ease-out !important;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1) !important;
 }
 
 @keyframes slideDown {
@@ -19,12 +23,188 @@
   to { transform: translateY(0); }
 }
 
+/* Header styling */
+.phishing-shield-header {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  padding: 10px 15px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2) !important;
+}
+
+.shield-logo {
+  display: flex !important;
+  align-items: center !important;
+}
+
+.shield-logo img {
+  margin-right: 10px !important;
+}
+
+.shield-logo h2 {
+  margin: 0 !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+}
+
+.risk-indicator {
+  display: flex !important;
+  align-items: center !important;
+}
+
+/* Body styling */
+.phishing-shield-body {
+  padding: 10px 15px !important;
+}
+
+.phishing-shield-body p {
+  margin: 0 0 10px 0 !important;
+  font-size: 14px !important;
+}
+
+.phishing-shield-details {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  margin-bottom: 15px !important;
+  background: rgba(0, 0, 0, 0.1) !important;
+  border-radius: 4px !important;
+  padding: 10px !important;
+}
+
+.phishing-shield-detail {
+  margin-right: 20px !important;
+  margin-bottom: 5px !important;
+}
+
+.detail-label {
+  font-weight: bold !important;
+  margin-right: 5px !important;
+}
+
+/* Button styling */
+.phishing-shield-actions {
+  display: flex !important;
+  gap: 10px !important;
+}
+
+.phishing-shield-actions button {
+  padding: 8px 16px !important;
+  border: none !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  font-weight: 600 !important;
+  transition: background-color 0.2s !important;
+}
+
+.btn-primary {
+  background-color: #ffffff !important;
+  color: #333333 !important;
+}
+
+.btn-primary:hover {
+  background-color: #f0f0f0 !important;
+}
+
+.btn-secondary {
+  background-color: rgba(255, 255, 255, 0.2) !important;
+  color: white !important;
+}
+
+.btn-secondary:hover {
+  background-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+#phishing-shield-close {
+  background: none !important;
+  border: none !important;
+  color: white !important;
+  font-size: 24px !important;
+  cursor: pointer !important;
+  padding: 0 !important;
+  margin-left: 10px !important;
+  opacity: 0.8 !important;
+}
+
+#phishing-shield-close:hover {
+  opacity: 1 !important;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .phishing-shield-details {
+    flex-direction: column !important;
+  }
+  
+  .phishing-shield-detail {
+    margin-right: 0 !important;
+    margin-bottom: 8px !important;
+  }
+}
+
 .phishing-shield-banner {
-  background: linear-gradient(135deg, #ff4444, #cc0000) !important;
   color: white !important;
   border: none !important;
   margin: 0 !important;
   padding: 0 !important;
+  transition: background-color 0.3s ease;
+}
+
+/* Risk level colors */
+.risk-level-low {
+  background: linear-gradient(to right, #4caf50, #8bc34a) !important;
+}
+
+.risk-level-medium {
+  background: linear-gradient(to right, #ff9800, #ffc107) !important;
+}
+
+.risk-level-high {
+  background: linear-gradient(to right, #f44336, #e91e63) !important;
+}
+
+.risk-badge {
+  display: inline-block !important;
+  padding: 4px 8px !important;
+  border-radius: 4px !important;
+  font-weight: bold !important;
+  font-size: 12px !important;
+  margin-left: 10px !important;
+  color: white !important;
+}
+
+.risk-badge-low {
+  background-color: #4caf50 !important;
+}
+
+.risk-badge-medium {
+  background-color: #ff9800 !important;
+}
+
+.risk-badge-high {
+  background-color: #f44336 !important;
+}
+
+/* Risk badges */
+.risk-badge {
+  display: inline-block !important;
+  padding: 4px 8px !important;
+  border-radius: 4px !important;
+  font-size: 12px !important;
+  font-weight: bold !important;
+  color: white !important;
+  margin-left: 10px !important;
+}
+
+.risk-badge-low {
+  background-color: #4caf50 !important;
+}
+
+.risk-badge-medium {
+  background-color: #ff9800 !important;
+}
+
+.risk-badge-high {
+  background-color: #f44336 !important;
 }
 
 .phishing-email-warning {

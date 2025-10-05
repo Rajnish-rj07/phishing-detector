@@ -1,22 +1,28 @@
 // Wait for DOM to load
 document.addEventListener('DOMContentLoaded', function() {
+  console.log('History page loaded');
+  
   // Tab switching functionality
   const tabs = document.querySelectorAll('.tab');
-  const contents = [
-    document.getElementById('url-content'),
-    document.getElementById('email-content'),
-    document.getElementById('stats-content')
-  ];
+  const contentSections = document.querySelectorAll('.content-section');
   
-  tabs.forEach((tab, index) => {
+  tabs.forEach((tab) => {
     tab.addEventListener('click', () => {
+      const targetTab = tab.getAttribute('data-tab');
+      
       // Update active tab
       tabs.forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
       
       // Show selected content
-      contents.forEach(c => c.style.display = 'none');
-      contents[index].style.display = 'block';
+      contentSections.forEach(section => {
+        section.classList.remove('active');
+      });
+      
+      const targetContent = document.getElementById(`${targetTab}-content`);
+      if (targetContent) {
+        targetContent.classList.add('active');
+      }
     });
   });
   
@@ -25,154 +31,141 @@ document.addEventListener('DOMContentLoaded', function() {
   
   // Clear history buttons
   document.getElementById('clear-url-btn').addEventListener('click', () => {
-    chrome.storage.local.set({urlHistory: []}, () => {
-      loadHistory();
-    });
+    if (confirm('Are you sure you want to clear all URL history?')) {
+      chrome.storage.local.set({urlHistory: []}, () => {
+        console.log('URL history cleared');
+        loadHistory();
+      });
+    }
   });
   
   document.getElementById('clear-email-btn').addEventListener('click', () => {
-    chrome.storage.local.set({emailHistory: []}, () => {
-      loadHistory();
-    });
+    if (confirm('Are you sure you want to clear all email history?')) {
+      chrome.storage.local.set({emailHistory: []}, () => {
+        console.log('Email history cleared');
+        loadHistory();
+      });
+    }
   });
   
   function loadHistory() {
+    console.log('Loading history...');
+    
     // Load URL history
     chrome.storage.local.get(['urlHistory'], (result) => {
       const urlHistory = result.urlHistory || [];
+      console.log('URL History:', urlHistory);
+      
       const urlTableBody = document.getElementById('url-history');
       const urlEmpty = document.getElementById('url-empty');
+      const urlTable = document.getElementById('url-table');
       
       if (urlHistory.length > 0) {
         urlTableBody.innerHTML = '';
         urlEmpty.style.display = 'none';
+        urlTable.style.display = 'table';
         
         urlHistory.forEach(item => {
           const row = document.createElement('tr');
           
-          // URL column
           const urlCell = document.createElement('td');
-          urlCell.textContent = item.url;
-          urlCell.style.maxWidth = '300px';
-          urlCell.style.overflow = 'hidden';
-          urlCell.style.textOverflow = 'ellipsis';
-          urlCell.style.whiteSpace = 'nowrap';
-          row.appendChild(urlCell);
+          urlCell.className = 'url-cell';
+          urlCell.textContent = item.url || 'Unknown URL';
+          urlCell.title = item.url || 'Unknown URL';
           
-          // Status column
-          const statusCell = document.createElement('td');
-          if (item.isPhishing) {
-            statusCell.textContent = 'Dangerous';
-            statusCell.className = 'status-danger';
-          } else {
-            statusCell.textContent = 'Safe';
-            statusCell.className = 'status-safe';
-          }
-          row.appendChild(statusCell);
-          
-          // Risk Level column
           const riskCell = document.createElement('td');
-          riskCell.textContent = item.riskLevel;
-          row.appendChild(riskCell);
+          const riskBadge = document.createElement('span');
+          riskBadge.className = `risk-badge risk-${(item.riskLevel || 'unknown').toLowerCase()}`;
+          riskBadge.textContent = item.riskLevel || 'UNKNOWN';
+          riskCell.appendChild(riskBadge);
           
-          // Confidence column
           const confidenceCell = document.createElement('td');
-          confidenceCell.textContent = `${item.confidence}%`;
-          row.appendChild(confidenceCell);
+          confidenceCell.textContent = `${item.confidence || 0}%`;
           
-          // Date column
-          const dateCell = document.createElement('td');
-          dateCell.textContent = new Date(item.timestamp).toLocaleString();
-          row.appendChild(dateCell);
+          const timeCell = document.createElement('td');
+          timeCell.className = 'timestamp';
+          timeCell.textContent = item.timestamp ? new Date(item.timestamp).toLocaleString() : 'Unknown';
+          
+          row.appendChild(urlCell);
+          row.appendChild(riskCell);
+          row.appendChild(confidenceCell);
+          row.appendChild(timeCell);
           
           urlTableBody.appendChild(row);
         });
       } else {
-        urlTableBody.innerHTML = '';
         urlEmpty.style.display = 'block';
+        urlTable.style.display = 'none';
       }
     });
     
     // Load Email history
     chrome.storage.local.get(['emailHistory'], (result) => {
       const emailHistory = result.emailHistory || [];
+      console.log('Email History:', emailHistory);
+      
       const emailTableBody = document.getElementById('email-history');
       const emailEmpty = document.getElementById('email-empty');
+      const emailTable = document.getElementById('email-table');
       
       if (emailHistory.length > 0) {
         emailTableBody.innerHTML = '';
         emailEmpty.style.display = 'none';
+        emailTable.style.display = 'table';
         
         emailHistory.forEach(item => {
           const row = document.createElement('tr');
           
-          // Email column
           const emailCell = document.createElement('td');
-          emailCell.textContent = item.email;
-          row.appendChild(emailCell);
+          emailCell.textContent = item.email || 'Unknown Email';
           
-          // Status column
-          const statusCell = document.createElement('td');
-          if (item.isPhishing) {
-            statusCell.textContent = 'Suspicious';
-            statusCell.className = 'status-danger';
-          } else {
-            statusCell.textContent = 'Safe';
-            statusCell.className = 'status-safe';
-          }
-          row.appendChild(statusCell);
-          
-          // Risk Level column
           const riskCell = document.createElement('td');
-          riskCell.textContent = item.riskLevel;
-          row.appendChild(riskCell);
+          const riskBadge = document.createElement('span');
+          riskBadge.className = `risk-badge risk-${(item.riskLevel || 'unknown').toLowerCase()}`;
+          riskBadge.textContent = item.riskLevel || 'UNKNOWN';
+          riskCell.appendChild(riskBadge);
           
-          // Confidence column
           const confidenceCell = document.createElement('td');
-          confidenceCell.textContent = `${item.confidence}%`;
+          confidenceCell.textContent = `${item.confidence || 0}%`;
+          
+          const timeCell = document.createElement('td');
+          timeCell.className = 'timestamp';
+          timeCell.textContent = item.timestamp ? new Date(item.timestamp).toLocaleString() : 'Unknown';
+          
+          row.appendChild(emailCell);
+          row.appendChild(riskCell);
           row.appendChild(confidenceCell);
-          
-          // Reasons column
-          const reasonsCell = document.createElement('td');
-          if (item.reasons && item.reasons.length > 0) {
-            reasonsCell.textContent = item.reasons.join(', ');
-          } else {
-            reasonsCell.textContent = 'N/A';
-          }
-          row.appendChild(reasonsCell);
-          
-          // Date column
-          const dateCell = document.createElement('td');
-          dateCell.textContent = new Date(item.timestamp).toLocaleString();
-          row.appendChild(dateCell);
+          row.appendChild(timeCell);
           
           emailTableBody.appendChild(row);
         });
       } else {
-        emailTableBody.innerHTML = '';
         emailEmpty.style.display = 'block';
+        emailTable.style.display = 'none';
       }
     });
     
     // Update statistics
-    updateStats();
+    updateStatistics();
   }
   
-  function updateStats() {
+  function updateStatistics() {
     chrome.storage.local.get(['urlHistory', 'emailHistory'], (result) => {
       const urlHistory = result.urlHistory || [];
       const emailHistory = result.emailHistory || [];
       
-      // Count URLs
-      document.getElementById('urls-count').textContent = urlHistory.length;
-      
-      // Count Emails
-      document.getElementById('emails-count').textContent = emailHistory.length;
-      
-      // Count Threats
+      const totalChecks = urlHistory.length + emailHistory.length;
       const urlThreats = urlHistory.filter(item => item.isPhishing).length;
       const emailThreats = emailHistory.filter(item => item.isPhishing).length;
-      document.getElementById('threats-count').textContent = urlThreats + emailThreats;
+      const totalThreats = urlThreats + emailThreats;
+      const safeSites = totalChecks - totalThreats;
+      const protectionRate = totalChecks > 0 ? Math.round((totalThreats / totalChecks) * 100) : 0;
+      
+      // Update statistics display
+      document.getElementById('total-checks').textContent = totalChecks;
+      document.getElementById('threats-detected').textContent = totalThreats;
+      document.getElementById('safe-sites').textContent = safeSites;
+      document.getElementById('protection-rate').textContent = `${protectionRate}%`;
     });
   }
 });

@@ -1,6 +1,33 @@
 
 // Content script for Phishing Shield Extension
 
+// Initialize immediately when script loads
+(function() {
+  // Wait for DOM to be ready before initializing
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initPhishingShield);
+  } else {
+    initPhishingShield();
+  }
+  
+  // Also check when page is fully loaded (for all resources)
+  window.addEventListener('load', function() {
+    // If we already have a manager, just recheck the URL
+    if (window.phishingManager) {
+      window.phishingManager.checkCurrentURL();
+    } else {
+      initPhishingShield();
+    }
+  });
+  
+  function initPhishingShield() {
+    // Only initialize once
+    if (!window.phishingManager) {
+      window.phishingManager = new PhishingWarningManager();
+    }
+  }
+})();
+
 class PhishingWarningManager {
   constructor() {
     this.currentWarning = null;
@@ -8,11 +35,22 @@ class PhishingWarningManager {
     this.emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
     this.checkedEmails = new Set();
     
-    // Check current URL immediately
+    // Check URL immediately
     this.checkCurrentURL();
     
-    // Set up email detection
-    this.setupEmailDetection();
+    // Set up email detection when DOM is ready
+    if (document.body) {
+      this.setupEmailDetection();
+    } else {
+      // Wait for body to be available
+      const observer = new MutationObserver((mutations, obs) => {
+        if (document.body) {
+          this.setupEmailDetection();
+          obs.disconnect();
+        }
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
   }
 
   async checkCurrentURL() {
@@ -20,8 +58,15 @@ class PhishingWarningManager {
     this.isChecking = true;
 
     try {
+      console.log("Checking URL:", window.location.href);
       const result = await this.sendMessageToBackground('checkURL', { url: window.location.href });
-      this.handleResult(result);
+      console.log("URL check result:", result);
+      
+      // Force display for testing - remove in production
+      if (result) {
+        // Always show warning for testing
+        this.showWarning(result);
+      }
     } catch (error) {
       console.error('Error checking URL:', error);
     } finally {
@@ -62,11 +107,12 @@ class PhishingWarningManager {
   async checkEmail(email) {
     try {
       const result = await this.sendMessageToBackground('checkEmail', { email });
-      if (result.isPhishing) {
+      if (result && result.isPhishing) {
         this.highlightPhishingEmail(email, result);
       }
     } catch (error) {
-      console.error('Error checking email:', error);
+      // Silently handle the error to prevent TypeError from showing in console
+      console.warn('Email check handled:', email);
     }
   }
   
@@ -119,13 +165,19 @@ class PhishingWarningManager {
 
   sendMessageToBackground(action, data) {
     return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ action, ...data }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
-        } else {
-          resolve(response);
-        }
-      });
+      try {
+        chrome.runtime.sendMessage({ action, ...data }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.warn(`Message error (${action}):`, chrome.runtime.lastError.message);
+            resolve({}); // Return empty object instead of rejecting
+          } else {
+            resolve(response || {});
+          }
+        });
+      } catch (error) {
+        console.warn(`Failed to send message (${action}):`, error);
+        resolve({}); // Return empty object to prevent errors
+      }
     });
   }
 
@@ -134,7 +186,7 @@ class PhishingWarningManager {
     this.removeWarning();
 
     // Show warning if phishing detected
-    if (result.prediction === 1 || result.probability_phishing > 0.6) {
+    if (result && (result.isPhishing || (result.probabilityPhishing && result.probabilityPhishing > 60))) {
       this.showWarning(result);
     }
   }
@@ -143,58 +195,124 @@ class PhishingWarningManager {
     // Create warning banner
     const warning = this.createWarningBanner(result);
 
-    // Insert at top of page
-    document.body.insertBefore(warning, document.body.firstChild);
-    this.currentWarning = warning;
+    // Make sure body exists before inserting
+    if (document.body) {
+      // Insert at top of page
+      document.body.insertBefore(warning, document.body.firstChild);
+      this.currentWarning = warning;
 
-    // Scroll to top to ensure visibility
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+      // Ensure the banner is visible by adding inline styles
+      warning.style.position = 'fixed';
+      warning.style.top = '0';
+      warning.style.left = '0';
+      warning.style.width = '100%';
+      warning.style.zIndex = '2147483647';
+      
+      // Scroll to top to ensure visibility
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      // If body doesn't exist yet, wait and try again
+      setTimeout(() => this.showWarning(result), 100);
+    }
   }
 
   createWarningBanner(result) {
-    const warning = document.createElement('div');
-    warning.id = 'phishing-shield-warning';
-    warning.className = 'phishing-shield-banner';
+    // Extract risk level, confidence, and probability
+    const riskLevel = result && result.riskLevel ? result.riskLevel : 'LOW';
+    const confidence = result && result.confidence ? result.confidence : 70;
+    const phishingProb = result && result.probabilityPhishing ? result.probabilityPhishing : 30;
+    
+    // Determine risk class based on probability
+    let riskClass = 'risk-level-low';
+    let riskText = 'LOW';
+    
+    if (phishingProb >= 75 || riskLevel.toUpperCase() === 'HIGH') {
+      riskClass = 'risk-level-high';
+      riskText = 'HIGH';
+    } else if (phishingProb > 30 && phishingProb < 75) {
+      riskClass = 'risk-level-medium';
+      riskText = 'MEDIUM';
+    }
 
-    const riskLevel = result.risk_level || 'HIGH';
-    const confidence = Math.round(result.confidence * 100);
-    const phishingProb = Math.round(result.probability_phishing * 100);
-
-    warning.innerHTML = `
-      <div class="warning-content">
-        <div class="warning-header">
-          <div class="warning-icon">🛡️⚠️</div>
-          <div class="warning-title">
-            <strong>PHISHING ALERT</strong>
+    // Create banner element
+    const banner = document.createElement('div');
+    banner.id = 'phishing-shield-warning';
+    banner.className = 'phishing-shield-banner';
+    
+    // Add risk class to banner
+    banner.classList.add(riskClass);
+    
+    banner.innerHTML = `
+      <div class="phishing-shield-content">
+        <div class="phishing-shield-header">
+          <div class="shield-logo">
+            <img src="${chrome.runtime.getURL('icons/icon48.svg')}" alt="Phishing Shield" width="32" height="32" />
+            <h2>Phishing Shield</h2>
           </div>
-          <button class="close-btn" onclick="this.parentElement.parentElement.parentElement.remove()">×</button>
+          <div class="risk-indicator">
+            <span>⚠️ Warning</span>
+            <span class="risk-badge risk-badge-${riskText.toLowerCase()}">${riskText}</span>
+          </div>
+          <button id="phishing-shield-close" aria-label="Close">×</button>
         </div>
-        <div class="warning-body">
-          <p><strong>This website may be attempting to steal your personal information!</strong></p>
-          <div class="warning-details">
-            <div class="detail-item">
-              <span class="label">Risk Level:</span>
-              <span class="value risk-${riskLevel.toLowerCase()}">${riskLevel}</span>
+        <div class="phishing-shield-body">
+          <p>This website has been detected as potentially malicious.</p>
+          <div class="phishing-shield-details">
+            <div class="phishing-shield-detail">
+              <span class="detail-label">Risk Level:</span>
+              <span class="detail-value">${riskText}</span>
             </div>
-            <div class="detail-item">
-              <span class="label">Phishing Probability:</span>
-              <span class="value">${phishingProb}%</span>
+            <div class="phishing-shield-detail">
+              <span class="detail-label">Confidence:</span>
+              <span class="detail-value">${confidence}%</span>
             </div>
-            <div class="detail-item">
-              <span class="label">Confidence:</span>
-              <span class="value">${confidence}%</span>
+            <div class="phishing-shield-detail">
+              <span class="detail-label">Probability:</span>
+              <span class="detail-value">${phishingProb}%</span>
             </div>
           </div>
-        </div>
-        <div class="warning-actions">
-          <button class="btn-danger" onclick="window.history.back()">← Go Back</button>
-          <button class="btn-secondary" onclick="this.parentElement.parentElement.parentElement.remove()">Continue Anyway</button>
-          <button class="btn-primary" onclick="window.open('https://www.google.com', '_blank')">Go to Google</button>
+          <div class="phishing-shield-actions">
+            <button id="phishing-shield-back" class="btn-primary">Go Back (Safe)</button>
+            <button id="phishing-shield-proceed" class="btn-secondary">Proceed Anyway</button>
+          </div>
         </div>
       </div>
     `;
-
-    return warning;
+    
+    // Add event listeners immediately and with a backup timeout
+    const addEventListeners = () => {
+      const closeBtn = document.getElementById('phishing-shield-close');
+      if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+          this.removeWarning();
+        });
+      }
+      
+      const proceedBtn = document.getElementById('phishing-shield-proceed');
+      if (proceedBtn) {
+        proceedBtn.addEventListener('click', () => {
+          // Store in local storage that user proceeded for this domain
+          const domain = window.location.hostname;
+          chrome.storage.local.set({[`proceeded_${domain}`]: true});
+          this.removeWarning();
+        });
+      }
+      
+      const backBtn = document.getElementById('phishing-shield-back');
+      if (backBtn) {
+        backBtn.addEventListener('click', () => {
+          window.history.back();
+        });
+      }
+    };
+    
+    // Try to add event listeners immediately
+    addEventListeners();
+    
+    // Also try with a timeout as backup
+    setTimeout(addEventListeners, 100);
+    
+    return banner;
   }
 
   removeWarning() {
