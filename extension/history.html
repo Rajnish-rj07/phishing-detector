@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Phishing Shield - Detection History</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .logo {
+            font-size: 24px;
+            margin-right: 10px;
+        }
+        
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            background-color: #fff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .tab {
+            padding: 15px 25px;
+            cursor: pointer;
+            background-color: #f8f9fa;
+            border: none;
+            flex: 1;
+            font-weight: bold;
+        }
+        
+        .tab.active {
+            background-color: #007bff;
+            color: white;
+        }
+        
+        .content {
+            background-color: #fff;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+        }
+        
+        .status-safe { color: #28a745; }
+        .status-danger { color: #dc3545; }
+        .status-unknown { color: #6c757d; }
+        
+        .clear-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #6c757d;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">🛡️</div>
+        <h1>Phishing Shield - Detection History</h1>
+    </div>
+    
+    <div class="tabs">
+        <button class="tab active" id="url-tab">URL History</button>
+        <button class="tab" id="email-tab">Email History</button>
+        <button class="tab" id="stats-tab">Statistics</button>
+    </div>
+    
+    <div class="content">
+        <div id="url-content">
+            <h2>URL Detection History</h2>
+            <div id="url-table-container">
+                <table id="url-table">
+                    <thead>
+                        <tr>
+                            <th>URL</th>
+                            <th>Status</th>
+                            <th>Risk Level</th>
+                            <th>Confidence</th>
+                            <th>Date Checked</th>
+                        </tr>
+                    </thead>
+                    <tbody id="url-history">
+                        <!-- URL history will be populated here -->
+                    </tbody>
+                </table>
+                <div id="url-empty" class="empty-state">
+                    <p>No URL detection history yet.</p>
+                </div>
+            </div>
+            <button id="clear-url-btn" class="clear-btn">Clear URL History</button>
+        </div>
+        
+        <div id="email-content" style="display: none;">
+            <h2>Email Detection History</h2>
+            <div id="email-table-container">
+                <table id="email-table">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Status</th>
+                            <th>Risk Level</th>
+                            <th>Confidence</th>
+                            <th>Reasons</th>
+                            <th>Date Checked</th>
+                        </tr>
+                    </thead>
+                    <tbody id="email-history">
+                        <!-- Email history will be populated here -->
+                    </tbody>
+                </table>
+                <div id="email-empty" class="empty-state">
+                    <p>No email detection history yet.</p>
+                </div>
+            </div>
+            <button id="clear-email-btn" class="clear-btn">Clear Email History</button>
+        </div>
+        
+        <div id="stats-content" style="display: none;">
+            <h2>Detection Statistics</h2>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 30px;">
+                <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; width: 30%;">
+                    <h3>URLs Checked</h3>
+                    <p id="urls-count" style="font-size: 24px; font-weight: bold;">0</p>
+                </div>
+                <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; width: 30%;">
+                    <h3>Emails Checked</h3>
+                    <p id="emails-count" style="font-size: 24px; font-weight: bold;">0</p>
+                </div>
+                <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; width: 30%;">
+                    <h3>Threats Detected</h3>
+                    <p id="threats-count" style="font-size: 24px; font-weight: bold;">0</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="js/history.js"></script>
+</body>
+</html>

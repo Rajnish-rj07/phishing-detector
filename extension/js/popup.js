@@ -24,6 +24,11 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   });
   
+  // Handle more info button - open history website
+  document.getElementById('more-info-btn').addEventListener('click', function() {
+    chrome.tabs.create({url: chrome.runtime.getURL('history.html')});
+  });
+  
   // Handle manual URL check
   document.getElementById('check-button').addEventListener('click', function() {
     const urlInput = document.getElementById('url-input');

@@ -63,6 +63,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       // Cache the result for future quick access
       cacheResult(request.url, result);
       
+      // Store in history
+      storeUrlHistory(result);
+      
       sendResponse(result);
     })
     .catch(error => {
@@ -118,6 +121,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       // Cache the result
       cacheResult(request.email, result);
       
+      // Store in email history
+      storeEmailHistory(result);
+      
       sendResponse(result);
     })
     .catch(error => {
@@ -165,4 +171,51 @@ function cleanCache() {
       urlCache.delete(key);
     }
   }
+}
+
+// History storage functions
+function storeUrlHistory(result) {
+  chrome.storage.local.get(['urlHistory'], (data) => {
+    const urlHistory = data.urlHistory || [];
+    
+    // Add timestamp to result
+    const historyItem = {
+      ...result,
+      timestamp: Date.now()
+    };
+    
+    // Add to beginning of array (most recent first)
+    urlHistory.unshift(historyItem);
+    
+    // Limit history to 100 items
+    if (urlHistory.length > 100) {
+      urlHistory.pop();
+    }
+    
+    // Save updated history
+    chrome.storage.local.set({urlHistory: urlHistory});
+  });
+}
+
+function storeEmailHistory(result) {
+  chrome.storage.local.get(['emailHistory'], (data) => {
+    const emailHistory = data.emailHistory || [];
+    
+    // Add timestamp to result
+    const historyItem = {
+      ...result,
+      timestamp: Date.now()
+    };
+    
+    // Add to beginning of array (most recent first)
+    emailHistory.unshift(historyItem);
+    
+    // Limit history to 100 items
+    if (emailHistory.length > 100) {
+      emailHistory.pop();
+    }
+    
+    // Save updated history
+    chrome.storage.local.set({emailHistory: emailHistory});
+  });
 }

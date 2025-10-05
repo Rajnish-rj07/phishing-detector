@@ -6,6 +6,7 @@
   
   "permissions": [
     "activeTab",
+    "tabs",
     "storage"
   ],
   
@@ -25,6 +26,13 @@
       "js": ["js/content.js"],
       "css": ["css/content.css"],
       "run_at": "document_idle"
+    }
+  ],
+  
+  "web_accessible_resources": [
+    {
+      "resources": ["css/*", "history.html"],
+      "matches": ["<all_urls>"]
     }
   ],
   
