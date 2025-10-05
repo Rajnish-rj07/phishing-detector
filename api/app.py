@@ -95,6 +95,104 @@ def predict():
             risk_level = "LOW"
         else:
             risk_level = "VERY_LOW"
+            
+        return jsonify({
+            'url': url,
+            'prediction': prediction,
+            'risk_level': risk_level,
+            'confidence': risk_score,
+            'probability_phishing': risk_score,
+            'probability_legitimate': 1.0 - risk_score
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Prediction error',
+            'message': str(e)
+        }), 500
+
+@app.route('/check_email', methods=['POST'])
+def check_email():
+    try:
+        data = request.get_json()
+        email = data.get('email', '')
+        
+        if not email:
+            return jsonify({'error': 'Email is required'}), 400
+        
+        # Extract email parts
+        try:
+            username, domain = email.split('@')
+        except ValueError:
+            return jsonify({
+                'email': email,
+                'is_phishing': True,
+                'risk_level': 'HIGH',
+                'confidence': 0.9,
+                'reasons': ['Invalid email format']
+            })
+        
+        # Check for suspicious patterns
+        reasons = []
+        risk_score = 0.1  # Base low risk
+        
+        # Check username for suspicious patterns
+        if len(username) > 20:
+            risk_score += 0.1
+            reasons.append('Unusually long username')
+        
+        if re.search(r'\d{4,}', username):
+            risk_score += 0.1
+            reasons.append('Username contains many numbers')
+        
+        # Check domain for suspicious patterns
+        suspicious_tlds = ['xyz', 'top', 'work', 'date', 'racing', 'stream']
+        domain_parts = domain.split('.')
+        tld = domain_parts[-1].lower() if domain_parts else ''
+        
+        if tld in suspicious_tlds:
+            risk_score += 0.3
+            reasons.append(f'Suspicious TLD: .{tld}')
+        
+        if len(domain_parts) > 2 and len(domain_parts[0]) > 15:
+            risk_score += 0.2
+            reasons.append('Unusually complex domain structure')
+        
+        # Check for common phishing keywords
+        phishing_keywords = ['secure', 'account', 'verify', 'update', 'bank', 'paypal', 'signin']
+        for keyword in phishing_keywords:
+            if keyword in username.lower() or keyword in domain.lower():
+                risk_score += 0.2
+                reasons.append(f'Contains phishing keyword: {keyword}')
+                break
+        
+        # Determine risk level
+        is_phishing = risk_score > 0.5
+        
+        if risk_score > 0.8:
+            risk_level = "VERY_HIGH"
+        elif risk_score > 0.6:
+            risk_level = "HIGH"
+        elif risk_score > 0.4:
+            risk_level = "MODERATE"
+        elif risk_score > 0.2:
+            risk_level = "LOW"
+        else:
+            risk_level = "VERY_LOW"
+        
+        return jsonify({
+            'email': email,
+            'is_phishing': is_phishing,
+            'risk_level': risk_level,
+            'confidence': risk_score,
+            'reasons': reasons
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Email analysis error',
+            'message': str(e)
+        }), 500
         
         return jsonify({
             'url': url,

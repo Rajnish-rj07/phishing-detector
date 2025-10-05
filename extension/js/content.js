@@ -5,7 +5,14 @@ class PhishingWarningManager {
   constructor() {
     this.currentWarning = null;
     this.isChecking = false;
+    this.emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+    this.checkedEmails = new Set();
+    
+    // Check current URL immediately
     this.checkCurrentURL();
+    
+    // Set up email detection
+    this.setupEmailDetection();
   }
 
   async checkCurrentURL() {
@@ -20,6 +27,94 @@ class PhishingWarningManager {
     } finally {
       this.isChecking = false;
     }
+  }
+  
+  setupEmailDetection() {
+    // Scan for emails in the page content
+    this.scanForEmails();
+    
+    // Set up mutation observer to detect new content
+    const observer = new MutationObserver((mutations) => {
+      this.scanForEmails();
+    });
+    
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+  }
+  
+  async scanForEmails() {
+    // Get all text content from the page
+    const pageText = document.body.innerText;
+    const emails = pageText.match(this.emailRegex) || [];
+    
+    // Check each email that hasn't been checked yet
+    for (const email of emails) {
+      if (!this.checkedEmails.has(email)) {
+        this.checkedEmails.add(email);
+        this.checkEmail(email);
+      }
+    }
+  }
+  
+  async checkEmail(email) {
+    try {
+      const result = await this.sendMessageToBackground('checkEmail', { email });
+      if (result.isPhishing) {
+        this.highlightPhishingEmail(email, result);
+      }
+    } catch (error) {
+      console.error('Error checking email:', error);
+    }
+  }
+  
+  highlightPhishingEmail(email, result) {
+    // Find all instances of this email in the page
+    const textNodes = this.findTextNodesWithEmail(email);
+    
+    textNodes.forEach(node => {
+      const parent = node.parentNode;
+      const text = node.nodeValue;
+      
+      // Create a highlighted version of the text
+      const newHtml = text.replace(
+        new RegExp(email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+        `<span class="phishing-email-warning" title="Risk Level: ${result.riskLevel}, Confidence: ${result.confidence}%">${email}</span>`
+      );
+      
+      // Replace the text node with the highlighted version
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = newHtml;
+      
+      const fragment = document.createDocumentFragment();
+      while (tempDiv.firstChild) {
+        fragment.appendChild(tempDiv.firstChild);
+      }
+      
+      parent.replaceChild(fragment, node);
+    });
+  }
+  
+  findTextNodesWithEmail(email) {
+    const textNodes = [];
+    const walk = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode: function(node) {
+          return node.nodeValue.includes(email) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        }
+      }
+    );
+    
+    let node;
+    while (node = walk.nextNode()) {
+      textNodes.push(node);
+    }
+    
+    return textNodes;
   }
 
   sendMessageToBackground(action, data) {

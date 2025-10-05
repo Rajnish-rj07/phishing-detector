@@ -27,6 +27,33 @@
   padding: 0 !important;
 }
 
+.phishing-email-warning {
+  background-color: #ff4d4d;
+  color: white;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-weight: bold;
+  text-decoration: line-through;
+  cursor: pointer;
+  display: inline-block;
+  position: relative;
+}
+
+.phishing-email-warning:hover::after {
+  content: attr(title);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #333;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  z-index: 1000;
+}
+
 .warning-content {
   max-width: 1200px !important;
   margin: 0 auto !important;
