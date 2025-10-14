@@ -130,10 +130,10 @@ body {
 }
 
 /* Status Colors */
-.status-safe { color: #28a745; }
-.status-warning { color: #ffc107; }
-.status-danger { color: #dc3545; }
-.status-unknown { color: #6c757d; }
+.status-safe { color: #28a745; background-color: #d4edda; border-color: #c3e6cb; }
+.status-warning { color: #856404; background-color: #fff3cd; border-color: #ffeeba; }
+.status-danger { color: #dc3545; background-color: #f8d7da; border-color: #f5c6cb; }
+.status-unknown { color: #6c757d; background-color: #f8f9fa; border-color: #e9ecef; }
 
 /* Risk Details */
 .risk-details {

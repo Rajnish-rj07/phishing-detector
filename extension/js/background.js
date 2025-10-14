@@ -1,12 +1,91 @@
 const API_URL = 'http://localhost:5000'; // Using local API server instead of remote server
 const TEST_MODE = false; // Disabled test mode for real detection
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache for URLs
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000; // 1 second delay between retries
 const urlCache = new Map(); // Cache for URL check results
 
 // Function to check if a string is an email
 function isEmail(text) {
   const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
   return emailRegex.test(text);
+}
+
+// Enhanced URL checking function that uses our new API features
+async function checkUrlWithAPI(url) {
+  let retries = 0;
+  
+  while (retries < MAX_RETRIES) {
+    try {
+      console.log(`Checking URL with enhanced API (attempt ${retries + 1}/${MAX_RETRIES}):`, url);
+      
+      // First check if API is available
+      const healthCheck = await fetch(`${API_URL}/health`).catch(() => null);
+      if (!healthCheck || !healthCheck.ok) {
+        throw new Error('API server is not available');
+      }
+      
+      // If health check passes, proceed with URL check
+    
+    // Proceed with URL check
+    const response = await fetch(`${API_URL}/predict`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ 
+        url: url,
+        check_external_apis: true
+      })
+    });
+    
+    if (!response.ok) {
+      if (retries === MAX_RETRIES - 1) {
+        throw new Error(`API error: ${response.status} - ${response.statusText}`);
+      }
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      retries++;
+      continue;
+    }
+    
+    const data = await response.json();
+    console.log('API response:', data);
+    
+    // Transform API response to extension format
+    return {
+      url: url,
+      isPhishing: data.prediction === 1,
+      riskLevel: data.risk_level || 'UNKNOWN',
+      confidence: Math.round((data.confidence || 0) * 100),
+      probabilityPhishing: Math.round((data.probability_phishing || 0) * 100),
+      probabilityLegitimate: Math.round((data.probability_legitimate || 1) * 100),
+      threatDetails: data.threat_details || [],
+      certificateAnalysis: data.certificate_analysis || null,
+      externalApiResults: data.external_api_results || null
+    };
+  } catch (error) {
+    console.error(`API check failed (attempt ${retries + 1}/${MAX_RETRIES}):`, error);
+    
+    if (retries < MAX_RETRIES - 1) {
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      retries++;
+      continue;
+    }
+
+    // If all retries failed, return a fallback result
+    return {
+      url: url,
+      isPhishing: false,
+      riskLevel: 'UNKNOWN',
+      confidence: 0,
+      probabilityPhishing: 0,
+      probabilityLegitimate: 100,
+      error: 'API server is not available. Please ensure the API server is running.',
+      details: error.message
+    };
+  }
+}
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -32,8 +111,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
       }
 
-      // Use pattern-based detection for real analysis
-      checkUrlWithPhishTank(request.url)
+      // Use enhanced API with external integrations
+      checkUrlWithAPI(request.url)
         .then(result => {
           // Cache the result for future quick access
           cacheResult(request.url, result);

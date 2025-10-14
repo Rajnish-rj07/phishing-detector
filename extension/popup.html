@@ -74,11 +74,28 @@
         <p>Phishing Probability: <span id="phishing-prob">-</span></p>
         <p>Risk Level: <span id="risk-level">-</span></p>
         <p>Last Checked: <span id="last-checked">-</span></p>
+        
+        <!-- New sections for advanced features -->
+        <div id="threat-details" style="display: none; margin-top: 10px;">
+            <h5 style="margin: 10px 0 5px 0;">Threat Details</h5>
+            <div id="threat-details-content" style="font-size: 12px; max-height: 100px; overflow-y: auto; background: #fff; border: 1px solid #ddd; padding: 8px; border-radius: 4px;"></div>
+        </div>
+        
+        <div id="cert-analysis" style="display: none; margin-top: 10px;">
+            <h5 style="margin: 10px 0 5px 0;">Certificate Analysis</h5>
+            <div id="cert-analysis-content" style="font-size: 12px; max-height: 100px; overflow-y: auto; background: #fff; border: 1px solid #ddd; padding: 8px; border-radius: 4px;"></div>
+        </div>
+        
+        <div id="external-apis" style="display: none; margin-top: 10px;">
+            <h5 style="margin: 10px 0 5px 0;">External Security Checks</h5>
+            <div id="external-apis-content" style="font-size: 12px; max-height: 100px; overflow-y: auto; background: #fff; border: 1px solid #ddd; padding: 8px; border-radius: 4px;"></div>
+        </div>
     </div>
     
     <button id="recheck-btn" class="button">🔄 Recheck URL</button>
     <button id="report-btn" class="button">⚠️ Report Issue</button>
     <button id="more-info-btn" class="button">📊 More Info</button>
+    <button id="details-btn" class="button" style="background: #28a745;">🔍 View Details</button>
     
     <div style="margin-top: 20px;">
         <h4>Check Any URL</h4>

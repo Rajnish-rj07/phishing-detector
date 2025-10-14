@@ -7,10 +7,30 @@ from urllib.parse import urlparse
 import tldextract
 import requests
 import time
-from datetime import datetime
+import os
+import json
+import ssl
+import socket
+import pickle
+import joblib
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 CORS(app)
+
+# Global variables for model updates
+MODEL_UPDATE_INTERVAL = 24 * 60 * 60  # 24 hours in seconds
+FEEDBACK_DATA_PATH = os.path.join(os.path.dirname(__file__), 'feedback_data.json')
+LAST_UPDATE_PATH = os.path.join(os.path.dirname(__file__), 'last_update.txt')
+MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_pipeline.pkl')
+
+# API keys for external services (replace with your actual API keys)
+# In production, these should be stored in environment variables
+API_KEYS = {
+    'virustotal': os.environ.get('VIRUSTOTAL_API_KEY', ''),
+    'google_safebrowsing': os.environ.get('GOOGLE_SAFEBROWSING_KEY', ''),
+    'urlscan': os.environ.get('URLSCAN_API_KEY', '')
+}
 
 class SimpleFeatureExtractor:
     def extract_all_features(self, url):
@@ -54,11 +74,241 @@ def health():
         "timestamp": datetime.now().isoformat()
     })
 
+def analyze_ssl_certificate(domain):
+    """Analyze SSL certificate for a domain"""
+    try:
+        # Remove protocol if present
+        if '://' in domain:
+            domain = domain.split('://', 1)[1]
+        
+        # Remove path if present
+        if '/' in domain:
+            domain = domain.split('/', 1)[0]
+            
+        context = ssl.create_default_context()
+        with socket.create_connection((domain, 443), timeout=3) as sock:
+            with context.wrap_socket(sock, server_hostname=domain) as ssock:
+                cert = ssock.getpeercert()
+                
+                # Extract certificate information
+                issuer = dict(x[0] for x in cert['issuer'])
+                subject = dict(x[0] for x in cert['subject'])
+                not_before = cert['notBefore']
+                not_after = cert['notAfter']
+                
+                # Calculate certificate age and validity period
+                from datetime import datetime
+                import time
+                
+                # Parse certificate dates
+                date_format = r'%b %d %H:%M:%S %Y %Z'
+                not_before_date = datetime.strptime(not_before, date_format)
+                not_after_date = datetime.strptime(not_after, date_format)
+                
+                # Calculate age and remaining validity
+                current_date = datetime.now()
+                cert_age_days = (current_date - not_before_date).days
+                remaining_days = (not_after_date - current_date).days
+                
+                return {
+                    'valid': True,
+                    'issuer': issuer.get('organizationName', 'Unknown'),
+                    'subject': subject.get('commonName', 'Unknown'),
+                    'age_days': cert_age_days,
+                    'remaining_days': remaining_days,
+                    'is_expired': remaining_days < 0,
+                    'is_self_signed': issuer.get('commonName') == subject.get('commonName'),
+                    'is_short_lived': (not_after_date - not_before_date).days < 90
+                }
+    except Exception as e:
+        return {
+            'valid': False,
+            'error': str(e)
+        }
+
+def check_virustotal(url):
+    """Check URL against VirusTotal API"""
+    if not API_KEYS['virustotal']:
+        return None
+        
+    try:
+        api_url = "https://www.virustotal.com/api/v3/urls"
+        headers = {
+            "x-apikey": API_KEYS['virustotal']
+        }
+        
+        # First, get the URL ID by submitting for analysis
+        data = {"url": url}
+        response = requests.post(api_url, headers=headers, data=data, timeout=10)
+        
+        if response.status_code != 200:
+            return None
+            
+        result = response.json()
+        analysis_id = result.get('data', {}).get('id')
+        
+        if not analysis_id:
+            return None
+            
+        # Wait a moment for analysis to complete
+        time.sleep(2)
+        
+        # Get the analysis results
+        analysis_url = f"https://www.virustotal.com/api/v3/analyses/{analysis_id}"
+        response = requests.get(analysis_url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            return None
+            
+        result = response.json()
+        stats = result.get('data', {}).get('attributes', {}).get('stats', {})
+        
+        return {
+            'malicious': stats.get('malicious', 0),
+            'suspicious': stats.get('suspicious', 0),
+            'harmless': stats.get('harmless', 0),
+            'undetected': stats.get('undetected', 0),
+            'is_malicious': stats.get('malicious', 0) > 0 or stats.get('suspicious', 0) > 0
+        }
+    except Exception as e:
+        print(f"Error checking VirusTotal: {e}")
+        return None
+
+def check_google_safebrowsing(url):
+    """Check URL against Google Safe Browsing API"""
+    if not API_KEYS['google_safebrowsing']:
+        return None
+        
+    try:
+        api_url = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={API_KEYS['google_safebrowsing']}"
+        payload = {
+            "client": {
+                "clientId": "phishing-detector",
+                "clientVersion": "1.0"
+            },
+            "threatInfo": {
+                "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"],
+                "platformTypes": ["ANY_PLATFORM"],
+                "threatEntryTypes": ["URL"],
+                "threatEntries": [{"url": url}]
+            }
+        }
+        
+        response = requests.post(api_url, json=payload, timeout=10)
+        result = response.json()
+        
+        matches = result.get('matches', [])
+        
+        if matches:
+            return {
+                'is_malicious': True,
+                'threat_type': matches[0].get('threatType', 'UNKNOWN'),
+                'platform_type': matches[0].get('platformType', 'UNKNOWN')
+            }
+        else:
+            return {
+                'is_malicious': False
+            }
+    except Exception as e:
+        print(f"Error checking Google Safe Browsing: {e}")
+        return None
+
+def check_urlscan(url):
+    """Check URL against urlscan.io API"""
+    if not API_KEYS['urlscan']:
+        return None
+        
+    try:
+        # Submit URL for scanning
+        api_url = "https://urlscan.io/api/v1/scan/"
+        headers = {
+            "API-Key": API_KEYS['urlscan'],
+            "Content-Type": "application/json"
+        }
+        data = {
+            "url": url,
+            "visibility": "private"  # Keep scan private
+        }
+        
+        response = requests.post(api_url, headers=headers, json=data, timeout=10)
+        
+        if response.status_code != 200:
+            return None
+            
+        result = response.json()
+        scan_id = result.get('uuid')
+        
+        if not scan_id:
+            return None
+            
+        # Wait for scan to complete (this would be async in production)
+        time.sleep(10)
+        
+        # Get scan results
+        result_url = f"https://urlscan.io/api/v1/result/{scan_id}/"
+        response = requests.get(result_url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            return None
+            
+        result = response.json()
+        
+        return {
+            'is_malicious': result.get('verdicts', {}).get('overall', {}).get('malicious', False),
+            'score': result.get('verdicts', {}).get('overall', {}).get('score', 0),
+            'categories': result.get('verdicts', {}).get('overall', {}).get('categories', []),
+            'domain': result.get('page', {}).get('domain', ''),
+            'ip': result.get('page', {}).get('ip', '')
+        }
+    except Exception as e:
+        print(f"Error checking urlscan.io: {e}")
+        return None
+
+def check_for_model_update():
+    """Check if model needs to be updated based on feedback data"""
+    try:
+        # Check if it's time to update
+        if os.path.exists(LAST_UPDATE_PATH):
+            with open(LAST_UPDATE_PATH, 'r') as f:
+                last_update = datetime.fromisoformat(f.read().strip())
+                if (datetime.now() - last_update).total_seconds() < MODEL_UPDATE_INTERVAL:
+                    return False  # Not time to update yet
+        
+        # Check if we have enough feedback data
+        if not os.path.exists(FEEDBACK_DATA_PATH):
+            return False
+            
+        with open(FEEDBACK_DATA_PATH, 'r') as f:
+            feedback_data = json.load(f)
+            
+        if len(feedback_data) < 10:  # Need at least 10 feedback items to update
+            return False
+            
+        # TODO: Implement actual model update logic here
+        # This would involve:
+        # 1. Loading the current model
+        # 2. Creating a training dataset from feedback
+        # 3. Updating the model with new data
+        # 4. Saving the updated model
+        
+        # For now, just update the timestamp
+        with open(LAST_UPDATE_PATH, 'w') as f:
+            f.write(datetime.now().isoformat())
+            
+        return True
+    except Exception as e:
+        print(f"Error checking for model update: {e}")
+        return False
+
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
+        # Check if model needs to be updated
+        check_for_model_update()
+        
         data = request.get_json()
         url = data.get('url', '')
+        check_external_apis = data.get('check_external_apis', True)
         
         if not url:
             return jsonify({'error': 'URL is required'}), 400
@@ -66,20 +316,131 @@ def predict():
         # Extract features
         features = extractor.extract_all_features(url)
         
+        # Parse URL components
+        parsed = urlparse(url)
+        domain = parsed.netloc
+        
+        # Analyze SSL certificate if HTTPS
+        cert_analysis = None
+        threat_details = []
+        external_api_results = {}
+        
+        if parsed.scheme == 'https':
+            cert_analysis = analyze_ssl_certificate(domain)
+            
+            # Add certificate issues to threat details
+            if not cert_analysis['valid']:
+                threat_details.append({
+                    'type': 'certificate_invalid',
+                    'description': 'SSL certificate is invalid or missing',
+                    'severity': 'high'
+                })
+            elif cert_analysis['is_expired']:
+                threat_details.append({
+                    'type': 'certificate_expired',
+                    'description': 'SSL certificate has expired',
+                    'severity': 'high'
+                })
+            elif cert_analysis['is_self_signed']:
+                threat_details.append({
+                    'type': 'certificate_self_signed',
+                    'description': 'SSL certificate is self-signed',
+                    'severity': 'medium'
+                })
+            elif cert_analysis['is_short_lived']:
+                threat_details.append({
+                    'type': 'certificate_short_lived',
+                    'description': 'SSL certificate has unusually short validity period',
+                    'severity': 'medium'
+                })
+        
+        # Check external APIs if requested
+        if check_external_apis:
+            # Check VirusTotal
+            vt_result = check_virustotal(url)
+            if vt_result:
+                external_api_results['virustotal'] = vt_result
+                if vt_result.get('is_malicious'):
+                    threat_details.append({
+                        'type': 'virustotal_detection',
+                        'description': f"VirusTotal detected this URL as malicious ({vt_result.get('malicious', 0)} engines)",
+                        'severity': 'high'
+                    })
+            
+            # Check Google Safe Browsing
+            gsb_result = check_google_safebrowsing(url)
+            if gsb_result:
+                external_api_results['google_safebrowsing'] = gsb_result
+                if gsb_result.get('is_malicious'):
+                    threat_details.append({
+                        'type': 'safebrowsing_detection',
+                        'description': f"Google Safe Browsing detected this URL as {gsb_result.get('threat_type', 'malicious')}",
+                        'severity': 'high'
+                    })
+            
+            # Check URLScan.io
+            urlscan_result = check_urlscan(url)
+            if urlscan_result:
+                external_api_results['urlscan'] = urlscan_result
+                if urlscan_result.get('is_malicious'):
+                    categories = ', '.join(urlscan_result.get('categories', ['unknown']))
+                    threat_details.append({
+                        'type': 'urlscan_detection',
+                        'description': f"URLScan.io detected this URL as malicious (categories: {categories})",
+                        'severity': 'high'
+                    })
+        
         # Simple heuristic scoring (replace with your model later)
         risk_score = 0.1  # Base low risk
         
-        # Risk factors
+        # Risk factors with detailed threat information
         if features['suspicious_keywords']:
             risk_score += 0.4
+            threat_details.append({
+                'type': 'suspicious_keywords',
+                'description': 'URL contains suspicious keywords often used in phishing',
+                'severity': 'high'
+            })
+            
         if features['has_ip']:
             risk_score += 0.3
+            threat_details.append({
+                'type': 'ip_address_url',
+                'description': 'URL uses an IP address instead of a domain name',
+                'severity': 'high'
+            })
+            
         if not features['has_https']:
             risk_score += 0.2
+            threat_details.append({
+                'type': 'no_https',
+                'description': 'Website does not use secure HTTPS connection',
+                'severity': 'medium'
+            })
+            
         if features['url_length'] > 100:
             risk_score += 0.2
+            threat_details.append({
+                'type': 'excessive_length',
+                'description': 'URL is unusually long which may hide the true destination',
+                'severity': 'medium'
+            })
+            
         if features['num_hyphens'] > 3:
             risk_score += 0.1
+            threat_details.append({
+                'type': 'excessive_hyphens',
+                'description': 'Domain contains many hyphens, often used in phishing domains',
+                'severity': 'low'
+            })
+        
+        # Adjust risk score based on external API results
+        if external_api_results:
+            # If any external API detected it as malicious, increase risk
+            if (external_api_results.get('virustotal', {}).get('is_malicious') or
+                external_api_results.get('google_safebrowsing', {}).get('is_malicious') or
+                external_api_results.get('urlscan', {}).get('is_malicious')):
+                risk_score = max(risk_score, 0.8)  # At least HIGH risk
         
         risk_score = min(risk_score, 1.0)
         prediction = 1 if risk_score > 0.5 else 0
@@ -96,14 +457,27 @@ def predict():
         else:
             risk_level = "VERY_LOW"
             
-        return jsonify({
+        # Create detailed response
+        response = {
             'url': url,
             'prediction': prediction,
             'risk_level': risk_level,
             'confidence': risk_score,
             'probability_phishing': risk_score,
-            'probability_legitimate': 1.0 - risk_score
-        })
+            'probability_legitimate': 1.0 - risk_score,
+            'threat_details': threat_details,
+            'analysis_timestamp': datetime.now().isoformat()
+        }
+        
+        # Add certificate analysis if available
+        if cert_analysis:
+            response['certificate_analysis'] = cert_analysis
+            
+        # Add external API results if available
+        if external_api_results:
+            response['external_api_results'] = external_api_results
+            
+        return jsonify(response)
         
     except Exception as e:
         return jsonify({
