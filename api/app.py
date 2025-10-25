@@ -69,7 +69,29 @@ API_KEYS = {
     'phishtank': os.environ.get('PHISHTANK_API_KEY', '')
 }
 
-from src.feature_extractor import EnhancedURLFeatureExtractor
+class SimpleFeatureExtractor:
+    def extract_all_features(self, url):
+        """Extract basic features without complex imports"""
+        parsed = urlparse(url)
+        extracted = tldextract.extract(url)
+        
+        features = {
+            'url_length': len(url),
+            'has_ip': 1 if re.match(r'\d+\.\d+\.\d+\.\d+', parsed.netloc) else 0,
+            'num_dots': url.count('.'),
+            'num_hyphens': url.count('-'),
+            'num_slashes': url.count('/'),
+            'has_https': 1 if parsed.scheme == 'https' else 0,
+            'domain_length': len(extracted.domain),
+            'path_length': len(parsed.path),
+            'query_length': len(parsed.query) if parsed.query else 0,
+            'suspicious_keywords': self.check_suspicious_keywords(url)
+        }
+        return features
+    
+    def check_suspicious_keywords(self, url):
+        suspicious_words = ['verify', 'account', 'login', 'bank', 'secure', 'update']
+        return 1 if any(word in url.lower() for word in suspicious_words) else 0
 
 # Initialize
 extractor = EnhancedURLFeatureExtractor()
@@ -95,7 +117,7 @@ def check_openphish(url):
         # OpenPhish offers a free feed that can be downloaded
         # For this implementation, we'll use their public feed URL
         # In a production environment, you would download this regularly
-        response = cached_get('https://openphish.com/feed.txt', timeout=5)
+        response = requests.get('https://openphish.com/feed.txt', timeout=5)
         if response.status_code == 200:
             phishing_urls = response.text.splitlines()
             # Check if the URL or domain is in the list
@@ -141,7 +163,7 @@ def check_abuseipdb(ip):
             'maxAgeInDays': '90',
             'verbose': ''
         }
-        response = cached_get(
+        response = requests.get(
             'https://api.abuseipdb.com/api/v2/check',
             headers=headers,
             params=params,
@@ -183,7 +205,7 @@ def check_emailrep(email):
             'Key': API_KEYS['emailrep'],
             'Accept': 'application/json',
         }
-        response = cached_get(
+        response = requests.get(
             f'https://emailrep.io/{email}',
             headers=headers,
             timeout=5
@@ -238,7 +260,7 @@ def check_phishtank(url):
             'app_key': API_KEYS['phishtank']
         }
         
-        response = cached_post(
+        response = requests.post(
             'https://checkurl.phishtank.com/checkurl/', 
             data=params,
             headers=headers,
@@ -304,6 +326,7 @@ def analyze_ssl_certificate(domain):
                 
                 # Check for OCSP stapling
                 has_ocsp_stapling = hasattr(ssock, 'ocsp_response') and ssock.ocsp_response is not None
+                import time
                 
                 # Parse certificate dates
                 date_format = r'%b %d %H:%M:%S %Y %Z'
@@ -570,15 +593,13 @@ def check_for_model_update():
             
         # Implement actual model update logic
         try:
-            # 1. Load the current model if not already loaded or if it needs retraining
-            if current_model is None:
-                current_model = OnlineLearningModel(feature_extractor=extractor)
-                print("Initialized new OnlineLearningModel for training.")
+            # 1. Load the current model
+            current_model = joblib.load(MODEL_PATH)
             
             # 2. Create a training dataset from feedback
             X_new = []
             y_new = []
-        
+            
             for item in feedback_data:
                 # Extract features from URL
                 url = item.get('url', '')
@@ -587,11 +608,22 @@ def check_for_model_update():
                     X_new.append(features)
                     # Use the corrected label from feedback
                     y_new.append(1 if item.get('is_phishing', False) else 0)
-        
+            
             if len(X_new) > 0:
+                # 3. Update the model with new data (partial_fit for incremental learning)
+                # Convert to DataFrame for pipeline compatibility
                 X_new_df = pd.DataFrame(X_new)
-                current_model.incremental_update(X_new_df, y_new)
-                current_model.save_model()
+                
+                # Update the model
+                if hasattr(current_model, 'partial_fit'):
+                    current_model.partial_fit(X_new_df, y_new)
+                else:
+                    # If model doesn't support partial_fit, we need to retrain
+                    # This is simplified - in production you'd want to combine with original training data
+                    current_model.fit(X_new_df, y_new)
+                
+                # 4. Save the updated model
+                joblib.dump(current_model, MODEL_PATH)
                 print(f"Model updated with {len(X_new)} new samples")
                 
                 # Clear processed feedback to avoid retraining on same data
