@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Phishing Shield - AI URL Protection",
-  "version": "1.0",
-  "description": "Real-time phishing detection using AI",
+  "version": "2.0",
+  "description": "Real-time phishing detection using AI with offline capabilities",
   
   "permissions": [
     "activeTab",

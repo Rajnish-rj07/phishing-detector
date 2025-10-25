@@ -29,7 +29,12 @@ MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_p
 API_KEYS = {
     'virustotal': os.environ.get('VIRUSTOTAL_API_KEY', ''),
     'google_safebrowsing': os.environ.get('GOOGLE_SAFEBROWSING_KEY', ''),
-    'urlscan': os.environ.get('URLSCAN_API_KEY', '')
+    'urlscan': os.environ.get('URLSCAN_API_KEY', ''),
+    'openphish': os.environ.get('OPENPHISH_API_KEY', ''),
+    'abuseipdb': os.environ.get('ABUSEIPDB_API_KEY', ''),
+    'emailrep': os.environ.get('EMAILREP_API_KEY', ''),
+    'threatminer': os.environ.get('THREATMINER_API_KEY', ''),
+    'phishtank': os.environ.get('PHISHTANK_API_KEY', '')
 }
 
 class SimpleFeatureExtractor:
@@ -74,6 +79,185 @@ def health():
         "timestamp": datetime.now().isoformat()
     })
 
+def check_openphish(url):
+    """Check if URL is in OpenPhish database"""
+    try:
+        # OpenPhish offers a free feed that can be downloaded
+        # For this implementation, we'll use their public feed URL
+        # In a production environment, you would download this regularly
+        response = requests.get('https://openphish.com/feed.txt', timeout=5)
+        if response.status_code == 200:
+            phishing_urls = response.text.splitlines()
+            # Check if the URL or domain is in the list
+            parsed_url = urlparse(url)
+            domain = parsed_url.netloc
+            
+            for phish_url in phishing_urls:
+                if url in phish_url or domain in phish_url:
+                    return {
+                        'is_malicious': True,
+                        'source': 'OpenPhish',
+                        'threat_type': 'phishing'
+                    }
+            
+            return {
+                'is_malicious': False,
+                'source': 'OpenPhish',
+                'message': 'URL not found in database'
+            }
+        else:
+            return {
+                'error': f'OpenPhish API returned status code {response.status_code}',
+                'is_malicious': False
+            }
+    except Exception as e:
+        return {
+            'error': f'Error checking OpenPhish: {str(e)}',
+            'is_malicious': False
+        }
+
+def check_abuseipdb(ip):
+    """Check IP reputation with AbuseIPDB"""
+    if not API_KEYS['abuseipdb']:
+        return {'error': 'AbuseIPDB API key not configured', 'is_malicious': False}
+    
+    try:
+        headers = {
+            'Key': API_KEYS['abuseipdb'],
+            'Accept': 'application/json',
+        }
+        params = {
+            'ipAddress': ip,
+            'maxAgeInDays': '90',
+            'verbose': ''
+        }
+        response = requests.get(
+            'https://api.abuseipdb.com/api/v2/check',
+            headers=headers,
+            params=params,
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            result = data.get('data', {})
+            abuse_score = result.get('abuseConfidenceScore', 0)
+            
+            return {
+                'is_malicious': abuse_score > 50,
+                'confidence_score': abuse_score,
+                'country': result.get('countryCode', 'Unknown'),
+                'isp': result.get('isp', 'Unknown'),
+                'domain': result.get('domain', 'Unknown'),
+                'total_reports': result.get('totalReports', 0),
+                'last_reported': result.get('lastReportedAt', 'Never')
+            }
+        else:
+            return {
+                'error': f'AbuseIPDB API returned status code {response.status_code}',
+                'is_malicious': False
+            }
+    except Exception as e:
+        return {
+            'error': f'Error checking AbuseIPDB: {str(e)}',
+            'is_malicious': False
+        }
+
+def check_emailrep(email):
+    """Check email reputation with EmailRep.io"""
+    if not API_KEYS['emailrep']:
+        return {'error': 'EmailRep API key not configured', 'is_malicious': False}
+    
+    try:
+        headers = {
+            'Key': API_KEYS['emailrep'],
+            'Accept': 'application/json',
+        }
+        response = requests.get(
+            f'https://emailrep.io/{email}',
+            headers=headers,
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                'is_malicious': data.get('suspicious', False),
+                'reputation': data.get('reputation', 'Unknown'),
+                'details': {
+                    'first_seen': data.get('first_seen', 'Unknown'),
+                    'last_seen': data.get('last_seen', 'Unknown'),
+                    'suspicious': data.get('suspicious', False),
+                    'spam': data.get('details', {}).get('spam', False),
+                    'free_provider': data.get('details', {}).get('free_provider', False),
+                    'disposable': data.get('details', {}).get('disposable', False),
+                    'deliverable': data.get('details', {}).get('deliverable', False),
+                    'spoofable': data.get('details', {}).get('spoofable', False),
+                    'malicious_activity': data.get('details', {}).get('malicious_activity', False),
+                    'malicious_activity_recent': data.get('details', {}).get('malicious_activity_recent', False),
+                    'blacklisted': data.get('details', {}).get('blacklisted', False),
+                    'credentials_leaked': data.get('details', {}).get('credentials_leaked', False),
+                    'data_breach': data.get('details', {}).get('data_breach', False)
+                }
+            }
+        else:
+            return {
+                'error': f'EmailRep API returned status code {response.status_code}',
+                'is_malicious': False
+            }
+    except Exception as e:
+        return {
+            'error': f'Error checking EmailRep: {str(e)}',
+            'is_malicious': False
+        }
+
+def check_phishtank(url):
+    """Check URL against PhishTank database"""
+    if not API_KEYS['phishtank']:
+        return {'error': 'PhishTank API key not configured', 'is_malicious': False}
+    
+    try:
+        headers = {
+            'User-Agent': 'PhishingDetector',
+            'Accept': 'application/json'
+        }
+        
+        params = {
+            'url': url,
+            'format': 'json',
+            'app_key': API_KEYS['phishtank']
+        }
+        
+        response = requests.post(
+            'https://checkurl.phishtank.com/checkurl/', 
+            data=params,
+            headers=headers,
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            result = data.get('results', {})
+            is_phish = result.get('in_database', False)
+            
+            return {
+                'is_malicious': is_phish,
+                'verified': result.get('verified', False) if is_phish else False,
+                'source': 'PhishTank',
+                'details': result
+            }
+        else:
+            return {
+                'error': f'PhishTank API returned status code {response.status_code}',
+                'is_malicious': False
+            }
+    
+    except Exception as e:
+        return {
+            'error': f'Error checking PhishTank: {str(e)}',
+            'is_malicious': False
+        }
+
 def analyze_ssl_certificate(domain):
     """Analyze SSL certificate for a domain"""
     try:
@@ -98,6 +282,18 @@ def analyze_ssl_certificate(domain):
                 
                 # Calculate certificate age and validity period
                 from datetime import datetime
+                
+                # Check for advanced security features
+                has_extended_validation = 'organizationIdentifier' in subject
+                signature_algorithm = ssock.context.get_ciphers()[0].get('alg', 'Unknown')
+                cipher_suite = ssock.cipher()[0]
+                tls_version = ssock.version()
+                
+                # Check for certificate transparency
+                has_sct = 'scts' in cert
+                
+                # Check for OCSP stapling
+                has_ocsp_stapling = hasattr(ssock, 'ocsp_response') and ssock.ocsp_response is not None
                 import time
                 
                 # Parse certificate dates
@@ -110,6 +306,34 @@ def analyze_ssl_certificate(domain):
                 cert_age_days = (current_date - not_before_date).days
                 remaining_days = (not_after_date - current_date).days
                 
+                # Evaluate overall security score (0-100)
+                security_score = 100
+                
+                # Deduct points for security issues
+                if remaining_days < 0:
+                    security_score -= 50
+                if issuer.get('commonName') == subject.get('commonName'):
+                    security_score -= 40
+                if (not_after_date - not_before_date).days < 90:
+                    security_score -= 10
+                if not has_extended_validation:
+                    security_score -= 10
+                if not has_sct:
+                    security_score -= 5
+                if not has_ocsp_stapling:
+                    security_score -= 5
+                
+                # Ensure score is within bounds
+                security_score = max(0, min(100, security_score))
+                
+                # Determine security level
+                if security_score >= 80:
+                    security_level = "HIGH"
+                elif security_score >= 60:
+                    security_level = "MEDIUM"
+                else:
+                    security_level = "LOW"
+                
                 return {
                     'valid': True,
                     'issuer': issuer.get('organizationName', 'Unknown'),
@@ -118,7 +342,18 @@ def analyze_ssl_certificate(domain):
                     'remaining_days': remaining_days,
                     'is_expired': remaining_days < 0,
                     'is_self_signed': issuer.get('commonName') == subject.get('commonName'),
-                    'is_short_lived': (not_after_date - not_before_date).days < 90
+                    'is_short_lived': (not_after_date - not_before_date).days < 90,
+                    'valid_until': not_after_date.strftime('%Y-%m-%d'),
+                    'security_score': security_score,
+                    'security_level': security_level,
+                    'advanced_security': {
+                        'has_extended_validation': has_extended_validation,
+                        'signature_algorithm': signature_algorithm,
+                        'cipher_suite': cipher_suite,
+                        'tls_version': tls_version,
+                        'has_certificate_transparency': has_sct,
+                        'has_ocsp_stapling': has_ocsp_stapling
+                    }
                 }
     except Exception as e:
         return {
@@ -284,14 +519,49 @@ def check_for_model_update():
         if len(feedback_data) < 10:  # Need at least 10 feedback items to update
             return False
             
-        # TODO: Implement actual model update logic here
-        # This would involve:
-        # 1. Loading the current model
-        # 2. Creating a training dataset from feedback
-        # 3. Updating the model with new data
-        # 4. Saving the updated model
+        # Implement actual model update logic
+        try:
+            # 1. Load the current model
+            current_model = joblib.load(MODEL_PATH)
+            
+            # 2. Create a training dataset from feedback
+            X_new = []
+            y_new = []
+            
+            for item in feedback_data:
+                # Extract features from URL
+                url = item.get('url', '')
+                if url:
+                    features = extractor.extract_all_features(url)
+                    X_new.append(features)
+                    # Use the corrected label from feedback
+                    y_new.append(1 if item.get('is_phishing', False) else 0)
+            
+            if len(X_new) > 0:
+                # 3. Update the model with new data (partial_fit for incremental learning)
+                # Convert to DataFrame for pipeline compatibility
+                X_new_df = pd.DataFrame(X_new)
+                
+                # Update the model
+                if hasattr(current_model, 'partial_fit'):
+                    current_model.partial_fit(X_new_df, y_new)
+                else:
+                    # If model doesn't support partial_fit, we need to retrain
+                    # This is simplified - in production you'd want to combine with original training data
+                    current_model.fit(X_new_df, y_new)
+                
+                # 4. Save the updated model
+                joblib.dump(current_model, MODEL_PATH)
+                print(f"Model updated with {len(X_new)} new samples")
+                
+                # Clear processed feedback to avoid retraining on same data
+                with open(FEEDBACK_DATA_PATH, 'w') as f:
+                    json.dump([], f)
+        except Exception as model_error:
+            print(f"Error during model update: {model_error}")
+            # Continue execution even if model update fails
         
-        # For now, just update the timestamp
+        # Update the timestamp
         with open(LAST_UPDATE_PATH, 'w') as f:
             f.write(datetime.now().isoformat())
             

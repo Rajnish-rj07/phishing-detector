@@ -20,6 +20,19 @@ function updateUI(response) {
   document.getElementById('external-apis').style.display = 'none';
   document.getElementById('details-btn').textContent = '🔍 View Details';
   
+  // Check if this is an offline analysis
+  const isOfflineMode = response.isOfflineAnalysis === true;
+  
+  // Add offline mode indicator if needed
+  const modeIndicator = document.getElementById('mode-indicator') || createModeIndicator();
+  if (isOfflineMode) {
+    modeIndicator.textContent = '🔌 Offline Mode';
+    modeIndicator.style.backgroundColor = '#6c757d';
+    modeIndicator.style.display = 'block';
+  } else {
+    modeIndicator.style.display = 'none';
+  }
+  
   if (response.error) {
     // Show error state
     document.getElementById('status').textContent = 'Error';
@@ -28,6 +41,35 @@ function updateUI(response) {
     document.getElementById('phishing-prob').textContent = 'N/A';
     document.getElementById('risk-level').textContent = 'UNKNOWN';
     return;
+  }
+  
+  // Helper function to create mode indicator
+  function createModeIndicator() {
+    const indicator = document.createElement('div');
+    indicator.id = 'mode-indicator';
+    indicator.style.padding = '4px 8px';
+    indicator.style.borderRadius = '4px';
+    indicator.style.color = 'white';
+    indicator.style.fontSize = '12px';
+    indicator.style.fontWeight = 'bold';
+    indicator.style.marginBottom = '10px';
+    indicator.style.textAlign = 'center';
+    
+    // Insert at the top of the content
+    const content = document.querySelector('.content');
+    if (content) {
+      // If content exists, insert as first child or append if no children
+      if (content.firstChild) {
+        content.insertBefore(indicator, content.firstChild);
+      } else {
+        content.appendChild(indicator);
+      }
+    } else {
+      // If content container doesn't exist, add indicator to body
+      document.body.appendChild(indicator);
+    }
+    
+    return indicator;
   }
   
   // Show results
@@ -71,6 +113,9 @@ function updateUI(response) {
       
     let certStatus = 'Valid';
     let certColor = '#28a745';
+    let securityLevel = cert.security_level || 'MEDIUM';
+    let securityScore = cert.security_score || 0;
+    let securityColor = '#28a745';
       
     if (!cert.valid || cert.is_expired || cert.is_self_signed) {
       certStatus = 'Invalid';
@@ -79,10 +124,20 @@ function updateUI(response) {
       certStatus = 'Suspicious';
       certColor = '#ffc107';
     }
+    
+    // Set security level color
+    if (securityLevel === 'LOW' || securityScore < 50) {
+      securityColor = '#dc3545';
+    } else if (securityLevel === 'MEDIUM' || securityScore < 80) {
+      securityColor = '#ffc107';
+    }
       
     certContent.innerHTML = `
       <div style="margin-bottom: 5px;">
         <strong>Status:</strong> <span style="color: ${certColor}">${certStatus}</span>
+      </div>
+      <div style="margin-bottom: 5px;">
+        <strong>Security Score:</strong> <span style="color: ${securityColor}">${securityScore}/100 (${securityLevel})</span>
       </div>
       <div style="margin-bottom: 5px;">
         <strong>Issuer:</strong> ${cert.issuer || 'Unknown'}
@@ -90,7 +145,39 @@ function updateUI(response) {
       <div style="margin-bottom: 5px;">
         <strong>Valid Until:</strong> ${cert.valid_until || 'Unknown'}
       </div>
+      <div style="margin-bottom: 5px;">
+        <strong>Remaining Days:</strong> ${cert.remaining_days || 'Unknown'}
+      </div>
     `;
+    
+    // Add advanced security features if available
+    if (cert.advanced_security) {
+      const advanced = cert.advanced_security;
+      
+      certContent.innerHTML += `
+        <div style="margin-top: 10px; margin-bottom: 5px;">
+          <strong>Advanced Security Features:</strong>
+        </div>
+        <div style="margin-bottom: 5px;">
+          <strong>Extended Validation:</strong> ${advanced.extended_validation ? 
+            '<span style="color: #28a745">Yes</span>' : 
+            '<span style="color: #dc3545">No</span>'}
+        </div>
+        <div style="margin-bottom: 5px;">
+          <strong>TLS Version:</strong> ${advanced.tls_version || 'Unknown'}
+        </div>
+        <div style="margin-bottom: 5px;">
+          <strong>Certificate Transparency:</strong> ${advanced.has_sct ? 
+            '<span style="color: #28a745">Yes</span>' : 
+            '<span style="color: #dc3545">No</span>'}
+        </div>
+        <div style="margin-bottom: 5px;">
+          <strong>OCSP Stapling:</strong> ${advanced.ocsp_stapling ? 
+            '<span style="color: #28a745">Yes</span>' : 
+            '<span style="color: #dc3545">No</span>'}
+        </div>
+      `;
+    }
   }
     
   // Update external API results if available
@@ -109,6 +196,18 @@ function updateUI(response) {
           '<span style="color: #28a745">Clean</span>'}
       `;
       apisContent.appendChild(vtElement);
+    }
+    
+    // PhishTank
+    if (apis.phishtank) {
+      const ptElement = document.createElement('div');
+      ptElement.style.marginBottom = '8px';
+      ptElement.innerHTML = `
+        <strong>PhishTank:</strong> ${apis.phishtank.is_malicious ? 
+          `<span style="color: #dc3545">Verified Phishing Site</span>` : 
+          '<span style="color: #28a745">Not in Database</span>'}
+      `;
+      apisContent.appendChild(ptElement);
     }
       
     // Google Safe Browsing
@@ -134,6 +233,42 @@ function updateUI(response) {
       `;
       apisContent.appendChild(urlscanElement);
     }
+    
+    // OpenPhish
+    if (apis.openphish) {
+      const openphishElement = document.createElement('div');
+      openphishElement.style.marginBottom = '8px';
+      openphishElement.innerHTML = `
+        <strong>OpenPhish:</strong> ${apis.openphish.is_malicious ? 
+          `<span style="color: #dc3545">Listed as phishing site</span>` : 
+          '<span style="color: #28a745">Not listed</span>'}
+      `;
+      apisContent.appendChild(openphishElement);
+    }
+    
+    // AbuseIPDB
+    if (apis.abuseipdb) {
+      const abuseipdbElement = document.createElement('div');
+      abuseipdbElement.style.marginBottom = '8px';
+      abuseipdbElement.innerHTML = `
+        <strong>AbuseIPDB:</strong> ${apis.abuseipdb.is_malicious ? 
+          `<span style="color: #dc3545">Malicious (Score: ${apis.abuseipdb.confidence_score}%)</span>` : 
+          '<span style="color: #28a745">No abuse reports</span>'}
+      `;
+      apisContent.appendChild(abuseipdbElement);
+    }
+    
+    // EmailRep
+    if (apis.emailrep) {
+      const emailrepElement = document.createElement('div');
+      emailrepElement.style.marginBottom = '8px';
+      emailrepElement.innerHTML = `
+        <strong>EmailRep:</strong> ${apis.emailrep.is_malicious ? 
+          `<span style="color: #dc3545">Suspicious (${apis.emailrep.reputation || 'unknown reputation'})</span>` : 
+          '<span style="color: #28a745">Good reputation</span>'}
+      `;
+      apisContent.appendChild(emailrepElement);
+    }
   }
   
   document.getElementById('last-checked').textContent = 'Just now';
@@ -155,12 +290,32 @@ document.addEventListener('DOMContentLoaded', function() {
       // Display current URL
       document.getElementById('current-url').textContent = currentUrl;
       
+      // Show loading state
+      document.getElementById('status').textContent = 'Checking...';
+      document.getElementById('status').className = 'status-checking';
+      document.getElementById('confidence').textContent = 'Analyzing URL security...';
+      
+      // Set timeout for API response
+      let responseTimeout = setTimeout(() => {
+        console.log('Request timed out, using offline analysis');
+        chrome.runtime.sendMessage({action: 'useOfflineMode', url: currentUrl}, function(offlineResponse) {
+          updateUI(offlineResponse || {
+            error: 'Request timed out. Using offline analysis.',
+            isOfflineAnalysis: true
+          });
+        });
+      }, 5000); // 5 second timeout
+      
       // Check the URL
       chrome.runtime.sendMessage({action: 'checkURL', url: currentUrl}, function(response) {
+        clearTimeout(responseTimeout); // Clear the timeout
         console.log('Received response:', response);
         if (chrome.runtime.lastError) {
           console.error('Runtime error:', chrome.runtime.lastError);
-          updateUI({error: chrome.runtime.lastError.message});
+          updateUI({
+            error: chrome.runtime.lastError.message,
+            isOfflineAnalysis: true
+          });
         } else {
           updateUI(response);
         }
@@ -208,17 +363,26 @@ document.addEventListener('DOMContentLoaded', function() {
     const certAnalysis = document.getElementById('cert-analysis');
     const externalApis = document.getElementById('external-apis');
     
-    // Toggle visibility
+    // Toggle visibility with forced display
     if (threatDetails.style.display === 'none') {
+      // Force display block for all sections
       threatDetails.style.display = 'block';
       certAnalysis.style.display = 'block';
       externalApis.style.display = 'block';
+      
+      // Ensure content is visible
+      document.getElementById('threat-details-content').style.display = 'block';
+      document.getElementById('cert-analysis-content').style.display = 'block';
+      document.getElementById('external-apis-content').style.display = 'block';
+      
       this.textContent = '🔍 Hide Details';
+      this.style.backgroundColor = '#dc3545';
     } else {
       threatDetails.style.display = 'none';
       certAnalysis.style.display = 'none';
       externalApis.style.display = 'none';
       this.textContent = '🔍 View Details';
+      this.style.backgroundColor = '#28a745';
     }
   });
   

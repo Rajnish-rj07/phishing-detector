@@ -4,6 +4,32 @@ const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache for URLs
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second delay between retries
 const urlCache = new Map(); // Cache for URL check results
+const OFFLINE_MODE = false; // Disable offline mode to use real-time API checks
+let isApiAvailable = true; // Assume API is available by default
+
+// Function to check API availability
+function checkApiAvailability() {
+  fetch(`${API_URL}/health`, { method: 'GET' })
+    .then(response => {
+      if (response.ok) {
+        console.log('API is available');
+        isApiAvailable = true;
+      } else {
+        console.log('API is not available');
+        isApiAvailable = false;
+      }
+    })
+    .catch(error => {
+      console.log('API check failed:', error);
+      isApiAvailable = false;
+    });
+}
+
+// Check API availability every 30 seconds to ensure real-time operation
+setInterval(checkApiAvailability, 30000);
+
+// Initial API check
+checkApiAvailability();
 
 // Function to check if a string is an email
 function isEmail(text) {
@@ -11,9 +37,122 @@ function isEmail(text) {
   return emailRegex.test(text);
 }
 
-// Enhanced URL checking function that uses our new API features
+// Local URL analysis function for offline mode
+function analyzeUrlLocally(url) {
+  console.log('Performing local URL analysis:', url);
+  
+  // Parse URL
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+  } catch (e) {
+    return {
+      isPhishing: true,
+      riskLevel: 'HIGH',
+      confidence: 80,
+      reason: 'Invalid URL format'
+    };
+  }
+  
+  // Extract features for local analysis
+  const domain = parsedUrl.hostname;
+  const path = parsedUrl.pathname;
+  const protocol = parsedUrl.protocol;
+  
+  // Simple heuristics for local detection
+  let riskScore = 0;
+  const threatDetails = [];
+  
+  // Check for IP address in domain
+  const ipRegex = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+  if (ipRegex.test(domain)) {
+    riskScore += 0.3;
+    threatDetails.push({
+      type: 'ip_address_url',
+      description: 'URL uses an IP address instead of a domain name',
+      severity: 'high'
+    });
+  }
+  
+  // Check for HTTP (not HTTPS)
+  if (protocol !== 'https:') {
+    riskScore += 0.2;
+    threatDetails.push({
+      type: 'no_https',
+      description: 'Website does not use secure HTTPS connection',
+      severity: 'medium'
+    });
+  }
+  
+  // Check for suspicious keywords in domain or path
+  const suspiciousKeywords = ['login', 'signin', 'account', 'secure', 'update', 'banking', 'verify', 'password', 'wallet', 'confirm'];
+  const domainAndPath = domain + path;
+  const foundKeywords = suspiciousKeywords.filter(keyword => domainAndPath.includes(keyword));
+  
+  if (foundKeywords.length > 0) {
+    riskScore += 0.1 * foundKeywords.length;
+    threatDetails.push({
+      type: 'suspicious_keywords',
+      description: `URL contains suspicious keywords: ${foundKeywords.join(', ')}`,
+      severity: 'medium'
+    });
+  }
+  
+  // Check for excessive subdomains
+  const subdomainCount = (domain.match(/\./g) || []).length;
+  if (subdomainCount > 2) {
+    riskScore += 0.2;
+    threatDetails.push({
+      type: 'excessive_subdomains',
+      description: 'URL contains an unusual number of subdomains',
+      severity: 'medium'
+    });
+  }
+  
+  // Check for long domain name
+  if (domain.length > 30) {
+    riskScore += 0.1;
+    threatDetails.push({
+      type: 'long_domain',
+      description: 'Domain name is unusually long',
+      severity: 'low'
+    });
+  }
+  
+  // Cap risk score at 1.0
+  riskScore = Math.min(riskScore, 1.0);
+  
+  // Determine risk level
+  let riskLevel;
+  if (riskScore > 0.7) {
+    riskLevel = 'HIGH';
+  } else if (riskScore > 0.4) {
+    riskLevel = 'MEDIUM';
+  } else {
+    riskLevel = 'LOW';
+  }
+  
+  return {
+    url: url,
+    isPhishing: riskScore > 0.5,
+    riskLevel: riskLevel,
+    confidence: Math.round(Math.max(0.3, riskScore) * 100), // Minimum 30% confidence for local analysis
+    probabilityPhishing: Math.round(riskScore * 100),
+    probabilityLegitimate: Math.round((1 - riskScore) * 100),
+    threatDetails: threatDetails,
+    isOfflineAnalysis: true
+  };
+}
+
+// Enhanced URL checking function that uses our new API features with offline fallback
 async function checkUrlWithAPI(url) {
   let retries = 0;
+  
+  // Check if we should use offline mode immediately
+  if (OFFLINE_MODE && !isApiAvailable) {
+    console.log('Using offline mode immediately due to previous API unavailability');
+    return analyzeUrlLocally(url);
+  }
   
   while (retries < MAX_RETRIES) {
     try {
@@ -25,67 +164,69 @@ async function checkUrlWithAPI(url) {
         throw new Error('API server is not available');
       }
       
+      // Mark API as available
+      isApiAvailable = true;
+      
       // If health check passes, proceed with URL check
-    
-    // Proceed with URL check
-    const response = await fetch(`${API_URL}/predict`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({ 
-        url: url,
-        check_external_apis: true
-      })
-    });
-    
-    if (!response.ok) {
-      if (retries === MAX_RETRIES - 1) {
-        throw new Error(`API error: ${response.status} - ${response.statusText}`);
+      const response = await fetch(`${API_URL}/predict`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ 
+          url: url,
+          check_external_apis: true
+        })
+      });
+      
+      if (!response.ok) {
+        if (retries === MAX_RETRIES - 1) {
+          throw new Error(`API error: ${response.status} - ${response.statusText}`);
+        }
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+        retries++;
+        continue;
       }
-      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
-      retries++;
-      continue;
+      
+      const data = await response.json();
+      console.log('API response:', data);
+      
+      // Transform API response to extension format
+      return {
+        url: url,
+        isPhishing: data.prediction === 1,
+        riskLevel: data.risk_level || 'UNKNOWN',
+        confidence: Math.round((data.confidence || 0) * 100),
+        probabilityPhishing: Math.round((data.probability_phishing || 0) * 100),
+        probabilityLegitimate: Math.round((data.probability_legitimate || 1) * 100),
+        threatDetails: data.threat_details || [],
+        certificateAnalysis: data.certificate_analysis || null,
+        externalApiResults: data.external_api_results || null
+      };
+    } catch (error) {
+      console.error(`API check failed (attempt ${retries + 1}/${MAX_RETRIES}):`, error);
+      
+      if (retries < MAX_RETRIES - 1) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+        retries++;
+        continue;
+      }
+      
+      // Mark API as unavailable
+      isApiAvailable = false;
+      
+      // If all retries failed, use offline mode
+      console.log('Switching to offline analysis mode');
+      const offlineResult = analyzeUrlLocally(url);
+      
+      return {
+        ...offlineResult,
+        error: 'API server is not available. Using offline detection mode.',
+        details: error.message
+      };
     }
-    
-    const data = await response.json();
-    console.log('API response:', data);
-    
-    // Transform API response to extension format
-    return {
-      url: url,
-      isPhishing: data.prediction === 1,
-      riskLevel: data.risk_level || 'UNKNOWN',
-      confidence: Math.round((data.confidence || 0) * 100),
-      probabilityPhishing: Math.round((data.probability_phishing || 0) * 100),
-      probabilityLegitimate: Math.round((data.probability_legitimate || 1) * 100),
-      threatDetails: data.threat_details || [],
-      certificateAnalysis: data.certificate_analysis || null,
-      externalApiResults: data.external_api_results || null
-    };
-  } catch (error) {
-    console.error(`API check failed (attempt ${retries + 1}/${MAX_RETRIES}):`, error);
-    
-    if (retries < MAX_RETRIES - 1) {
-      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
-      retries++;
-      continue;
-    }
-
-    // If all retries failed, return a fallback result
-    return {
-      url: url,
-      isPhishing: false,
-      riskLevel: 'UNKNOWN',
-      confidence: 0,
-      probabilityPhishing: 0,
-      probabilityLegitimate: 100,
-      error: 'API server is not available. Please ensure the API server is running.',
-      details: error.message
-    };
   }
-}
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -105,7 +246,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       
       // Check cache first for faster response
       const cachedResult = checkCache(request.url);
-      if (cachedResult) {
+      if (cachedResult && !TEST_MODE) {
         console.log('Using cached result for:', request.url);
         sendResponse(cachedResult);
         return true;
@@ -141,6 +282,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
 
       return true; // Keep message channel open
+    }
+    
+    if (request.action === 'useOfflineMode') {
+      console.log('Forced offline mode for URL:', request.url);
+      const offlineResult = analyzeUrlLocally(request.url);
+      offlineResult.isOfflineAnalysis = true;
+      sendResponse(offlineResult);
+      return true;
     }
     
     if (request.action === 'checkEmail') {
@@ -466,11 +615,34 @@ async function checkEmailSafety(email) {
   }
 }
 
-// Local email check function that doesn't use fetch API
+// Email check function that uses the API server
 async function checkEmail(email) {
   try {
-    // Analyze email locally
-    const result = await checkEmailSafety(email);
+    // First check if API is available
+    const healthCheck = await fetch(`${API_URL}/health`).catch(() => null);
+    if (!healthCheck || !healthCheck.ok) {
+      // Fallback to local check if API is not available
+      console.warn('API server not available, using local email check');
+      return await checkEmailSafety(email);
+    }
+    
+    // Use API for email check
+    const response = await fetch(`${API_URL}/check_email`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ email: email })
+    });
+    
+    if (!response.ok) {
+      console.warn(`API email check failed: ${response.status} - ${response.statusText}`);
+      // Fallback to local check
+      return await checkEmailSafety(email);
+    }
+    
+    const result = await response.json();
     
     // Store in history
     try {
@@ -483,18 +655,14 @@ async function checkEmail(email) {
       });
       await chrome.storage.local.set({ history });
     } catch (error) {
-      console.warn('Failed to store in history:', error);
+      console.warn('Error storing email check history:', error);
     }
     
     return result;
   } catch (error) {
     console.warn('Error checking email:', error);
-    return { 
-      isPhishing: false,
-      confidence: 0,
-      probabilityPhishing: 0,
-      riskLevel: 'LOW'
-    };
+    // Fallback to local check if API call fails
+    return await checkEmailSafety(email);
   }
 }
 
