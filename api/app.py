@@ -28,6 +28,7 @@ import socket
 import pickle
 import joblib
 from datetime import datetime, timedelta
+from src.online_model import OnlineLearningModel # Import OnlineLearningModel
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": ["chrome-extension://ciingiplfdkjgggpekedijaiplefflik", "http://localhost:*", "https://phishing-detector-isnv.onrender.com"]}})
@@ -492,7 +493,10 @@ def check_for_model_update():
             # Attempt to load existing model
             model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_pipeline.pkl')
             if os.path.exists(model_path):
-                current_model = joblib.load(model_path)
+                # current_model = joblib.load(model_path) # Old line
+                current_model_instance = OnlineLearningModel()
+                if current_model_instance.load_model():
+                    current_model = current_model_instance
                 print("Model loaded successfully during check_for_model_update.")
             else:
                 print("No existing model found. Will train a new one if enough feedback data.")
@@ -569,7 +573,10 @@ def load_model():
     global current_model
     model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_pipeline.pkl')
     if os.path.exists(model_path):
-        current_model = joblib.load(model_path)
+        # current_model = joblib.load(model_path) # Old line
+        current_model_instance = OnlineLearningModel()
+        if current_model_instance.load_model():
+            current_model = current_model_instance
         print("Model loaded successfully.")
     else:
         print("No model found at startup. Model will be initialized on first update or training.")

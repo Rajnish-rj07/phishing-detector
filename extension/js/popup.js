@@ -346,7 +346,7 @@ document.addEventListener('DOMContentLoaded', function() {
           });
         } else {
           // Fetch explanation
-          fetch('http://localhost:5000/explain', {
+          fetch('https://phishing-detector-isnv.onrender.com/explain', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
@@ -391,7 +391,7 @@ document.addEventListener('DOMContentLoaded', function() {
             updateUI({error: chrome.runtime.lastError.message});
           } else {
             // Fetch explanation
-            fetch('http://localhost:5000/explain', {
+            fetch('https://phishing-detector-isnv.onrender.com/explain', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json'
@@ -480,7 +480,7 @@ document.addEventListener('DOMContentLoaded', function() {
           updateUI({error: chrome.runtime.lastError.message});
         } else {
           // Fetch explanation
-          fetch('http://localhost:5000/explain', {
+          fetch('https://phishing-detector-isnv.onrender.com/explain', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'

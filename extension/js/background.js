@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:5000'; // Using local API server instead of remote server
+const API_URL = 'https://phishing-detector-isnv.onrender.com';
 const TEST_MODE = false; // Disabled test mode for real detection
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache for URLs
 const MAX_RETRIES = 3;
