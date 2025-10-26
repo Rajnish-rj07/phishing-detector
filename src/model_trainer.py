@@ -11,6 +11,8 @@ from sklearn.feature_selection import SelectKBest, f_classif
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score
+from sklearn.feature_extraction.text import TfidfVectorizer
+from src.feature_extractor import EnhancedURLFeatureExtractor
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -32,16 +34,37 @@ class PhishingModelTrainer:
         self.best_model = None
         self.best_name = None
         self.best_score = 0.0
+        self.tfidf_vectorizer = TfidfVectorizer(max_features=1000, stop_words='english') # Initialize TF-IDF
+        self.feature_extractor = EnhancedURLFeatureExtractor() # Initialize feature extractor
 
     def load_data(self, path='data/features_dataset.csv'):
         df = pd.read_csv(path)
-        # Drop non-numeric columns if present
-        X = df.select_dtypes(include=[np.number]).drop(columns=['label'], errors='ignore')
+        # Assuming 'url' column exists for text extraction
+        if 'url' in df.columns:
+            # Extract text content for TF-IDF
+            print("Extracting text content for TF-IDF...")
+            df['text_content'] = df['url'].apply(self.feature_extractor.extract_text_content)
+            # Fit TF-IDF vectorizer on the text content
+            self.tfidf_vectorizer.fit(df['text_content'].fillna(''))
+            # Transform text content into TF-IDF features
+            tfidf_features = self.tfidf_vectorizer.transform(df['text_content'].fillna('')).toarray()
+            tfidf_feature_names = [f'tfidf_{i}' for i in range(tfidf_features.shape[1])]
+            tfidf_df = pd.DataFrame(tfidf_features, columns=tfidf_feature_names, index=df.index)
+            # Concatenate TF-IDF features with existing numerical features
+            X = df.select_dtypes(include=[np.number]).drop(columns=['label'], errors='ignore')
+            X = pd.concat([X, tfidf_df], axis=1)
+        else:
+            X = df.select_dtypes(include=[np.number]).drop(columns=['label'], errors='ignore')
+
         y = df['label']
-        print(f"Loaded {len(df)} samples with {X.shape[1]} numeric features")
+        print(f"Loaded {len(df)} samples with {X.shape[1]} features (including TF-IDF if applicable)")
         return X, y
 
     def preprocess(self, X_train, X_test, k=20):
+        # Ensure all columns are numeric before scaling
+        X_train = X_train.apply(pd.to_numeric, errors='coerce').fillna(0)
+        X_test = X_test.apply(pd.to_numeric, errors='coerce').fillna(0)
+
         # 1. Standard scaling
         std = StandardScaler()
         X_train_std = std.fit_transform(X_train)
@@ -54,8 +77,14 @@ class PhishingModelTrainer:
         selector = SelectKBest(f_classif, k=min(k, X_train_mm.shape[1]))
         X_train_sel = selector.fit_transform(X_train_mm, y_train)
         X_test_sel = selector.transform(X_test_mm)
+        
+        # Get selected feature names
+        selected_feature_indices = selector.get_support(indices=True)
+        original_feature_names = X_train.columns.tolist()
+        selected_feature_names = [original_feature_names[i] for i in selected_feature_indices]
+
         print(f"Selected top {X_train_sel.shape[1]} features")
-        return X_train_sel, X_test_sel, std, mm, selector
+        return X_train_sel, X_test_sel, std, mm, selector, selected_feature_names
 
     def train(self, X_tr, y_tr):
         trained = {}
@@ -80,7 +109,7 @@ class PhishingModelTrainer:
         print("RF tuned params:", grid.best_params_)
         return grid.best_estimator_, grid.best_score_
 
-    def save_pipeline(self, model, std, mm, selector,
+    def save_pipeline(self, model, std, mm, selector, tfidf_vectorizer, selected_feature_names,
                       path='models/phishing_pipeline.pkl'):
         os.makedirs('models', exist_ok=True)
         pkg = {
@@ -88,6 +117,8 @@ class PhishingModelTrainer:
             'scaler_std': std,
             'scaler_mm': mm,
             'selector': selector,
+            'tfidf_vectorizer': tfidf_vectorizer, # Save TF-IDF vectorizer
+            'selected_feature_names': selected_feature_names, # Save selected feature names
             'model_name': self.best_name,
             'accuracy': self.best_score,
             'timestamp': datetime.now().isoformat()
@@ -103,7 +134,7 @@ class PhishingModelTrainer:
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, random_state=42, stratify=y
         )
-        X_tr, X_te, std, mm, selector = self.preprocess(X_train, X_test)
+        X_tr, X_te, std, mm, selector, selected_feature_names = self.preprocess(X_train, X_test)
 
         # Train base models
         trained = self.train(X_tr, y_train)
@@ -124,7 +155,7 @@ class PhishingModelTrainer:
             self.best_name = 'RandomForest_Tuned'
 
         print(f"\nBest model: {self.best_name} (accuracy: {self.best_score:.4f})")
-        self.save_pipeline(self.best_model, std, mm, selector)
+        self.save_pipeline(self.best_model, std, mm, selector, self.tfidf_vectorizer, selected_feature_names)
 
 if __name__ == "__main__":
     trainer = PhishingModelTrainer()

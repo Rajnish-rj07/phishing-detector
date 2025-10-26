@@ -246,7 +246,7 @@ class PhishingWarningManager {
       <div class="phishing-shield-content">
         <div class="phishing-shield-header">
           <div class="shield-logo">
-            <img src="${chrome.runtime.getURL('icons/icon48.svg')}" alt="Phishing Shield" width="32" height="32" />
+            <img src="${chrome.runtime.getURL('icons/phishing_shield_logo.svg')}" alt="Phishing Shield" width="32" height="32" />
             <h2>Phishing Shield</h2>
           </div>
           <div class="risk-indicator">

@@ -6,10 +6,13 @@ import hashlib
 from bs4 import BeautifulSoup
 import socket
 from src.reputation_checker import ReputationChecker
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 class EnhancedURLFeatureExtractor:
     def __init__(self):
         self.reputation_checker = ReputationChecker()
+        self.tfidf_vectorizer = None # Placeholder for TF-IDF vectorizer
+        self.tfidf_feature_names = []
     
     def extract_all_features(self, url):
         """Extract comprehensive features including real-time data"""
@@ -23,8 +26,22 @@ class EnhancedURLFeatureExtractor:
         features.update(self.extract_technical_features(url))
         features.update(self.extract_content_features(url))
         
+        # NEW: NLP features (placeholder for now)
+        text_content = self.extract_text_content(url)
+        nlp_features = self._process_text_features(text_content)
+        features.update(nlp_features)
+        
         return features
     
+    def _process_text_features(self, text_content):
+        """Process text content using TF-IDF (placeholder for now)"""
+        if self.tfidf_vectorizer and text_content:
+            # Transform the text content into TF-IDF features
+            text_vector = self.tfidf_vectorizer.transform([text_content])
+            # Convert to a dictionary of feature names and values
+            return dict(zip(self.tfidf_feature_names, text_vector.toarray()[0]))
+        return {}
+
     def extract_basic_url_features(self, url):
         """Your existing URL feature extraction"""
         parsed = urlparse(url)
@@ -164,6 +181,33 @@ class EnhancedURLFeatureExtractor:
         
         return features
     
+    def extract_text_content(self, url):
+        """NEW: Extract visible text content from the webpage"""
+        try:
+            response = requests.get(
+                url, 
+                timeout=5, 
+                allow_redirects=True,
+                verify=False,  # Skip SSL verification for analysis
+                headers={'User-Agent': 'Mozilla/5.0 (compatible; PhishingBot/1.0)'}
+            )
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.content, 'html.parser')
+                # Remove script and style elements
+                for script_or_style in soup(['script', 'style']):
+                    script_or_style.extract()
+                text = soup.get_text()
+                # Break into lines and remove leading/trailing space on each
+                lines = (line.strip() for line in text.splitlines())
+                # Break multi-hyphenated words into two
+                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                # Drop blank lines
+                text = '\n'.join(chunk for chunk in chunks if chunk)
+                return text
+        except Exception as e:
+            print(f"Error extracting text content from {url}: {e}")
+        return ""
+
     def calculate_entropy(self, url):
         """Calculate Shannon entropy of URL"""
         import math

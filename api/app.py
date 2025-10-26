@@ -1,22 +1,54 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import pandas as pd
-import numpy as np
-import re
-from urllib.parse import urlparse
-import tldextract
-import requests
-import time
-import os
 import json
-import ssl
+import os
+import re
 import socket
-import pickle
+import ssl
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from urllib.parse import urlparse
+
+from flask import Flask, jsonify, request
+from flask_cors import CORS
 import joblib
-from datetime import datetime, timedelta
+import numpy as np
+import pandas as pd
+import requests
+from sklearn.feature_selection import SelectKBest, f_classif
+from sklearn.preprocessing import StandardScaler
+from urllib.parse import urlparse
+
+import tldextract
+from src.feature_extractor import EnhancedURLFeatureExtractor
+from src.online_mode import OnlineLearningModel
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": ["chrome-extension://ciingiplfdkjgggpekedijaiplefflik", "http://localhost:*", "https://phishing-detector-isnv.onrender.com"]}})
+
+# Initialize ThreadPoolExecutor for async tasks
+executor = ThreadPoolExecutor(max_workers=5)
+
+# Simple in-memory cache for external API responses
+cache = {}
+CACHE_TTL = 3600  # Cache Time-To-Live in seconds (1 hour)
+
+def cached_get(url, headers=None, params=None, timeout=5):
+    cache_key = json.dumps({'url': url, 'headers': headers, 'params': params}, sort_keys=True)
+    if cache_key in cache and (time.time() - cache[cache_key]['timestamp'] < CACHE_TTL):
+        return cache[cache_key]['response']
+
+    response = requests.get(url, headers=headers, params=params, timeout=timeout)
+    cache[cache_key] = {'response': response, 'timestamp': time.time()}
+    return response
+
+def cached_post(url, data=None, json=None, headers=None, timeout=5):
+    cache_key = json.dumps({'url': url, 'data': data, 'json': json, 'headers': headers}, sort_keys=True)
+    if cache_key in cache and (time.time() - cache[cache_key]['timestamp'] < CACHE_TTL):
+        return cache[cache_key]['response']
+
+    response = requests.post(url, data=data, json=json, headers=headers, timeout=timeout)
+    cache[cache_key] = {'response': response, 'timestamp': time.time()}
+    return response
 
 # Global variables for model updates
 MODEL_UPDATE_INTERVAL = 24 * 60 * 60  # 24 hours in seconds
@@ -37,32 +69,10 @@ API_KEYS = {
     'phishtank': os.environ.get('PHISHTANK_API_KEY', '')
 }
 
-class SimpleFeatureExtractor:
-    def extract_all_features(self, url):
-        """Extract basic features without complex imports"""
-        parsed = urlparse(url)
-        extracted = tldextract.extract(url)
-        
-        features = {
-            'url_length': len(url),
-            'has_ip': 1 if re.match(r'\d+\.\d+\.\d+\.\d+', parsed.netloc) else 0,
-            'num_dots': url.count('.'),
-            'num_hyphens': url.count('-'),
-            'num_slashes': url.count('/'),
-            'has_https': 1 if parsed.scheme == 'https' else 0,
-            'domain_length': len(extracted.domain),
-            'path_length': len(parsed.path),
-            'query_length': len(parsed.query) if parsed.query else 0,
-            'suspicious_keywords': self.check_suspicious_keywords(url)
-        }
-        return features
-    
-    def check_suspicious_keywords(self, url):
-        suspicious_words = ['verify', 'account', 'login', 'bank', 'secure', 'update']
-        return 1 if any(word in url.lower() for word in suspicious_words) else 0
+from src.feature_extractor import EnhancedURLFeatureExtractor
 
 # Initialize
-extractor = SimpleFeatureExtractor()
+extractor = EnhancedURLFeatureExtractor()
 
 @app.route('/', methods=['GET'])
 def index():
@@ -85,7 +95,7 @@ def check_openphish(url):
         # OpenPhish offers a free feed that can be downloaded
         # For this implementation, we'll use their public feed URL
         # In a production environment, you would download this regularly
-        response = requests.get('https://openphish.com/feed.txt', timeout=5)
+        response = cached_get('https://openphish.com/feed.txt', timeout=5)
         if response.status_code == 200:
             phishing_urls = response.text.splitlines()
             # Check if the URL or domain is in the list
@@ -131,7 +141,7 @@ def check_abuseipdb(ip):
             'maxAgeInDays': '90',
             'verbose': ''
         }
-        response = requests.get(
+        response = cached_get(
             'https://api.abuseipdb.com/api/v2/check',
             headers=headers,
             params=params,
@@ -173,7 +183,7 @@ def check_emailrep(email):
             'Key': API_KEYS['emailrep'],
             'Accept': 'application/json',
         }
-        response = requests.get(
+        response = cached_get(
             f'https://emailrep.io/{email}',
             headers=headers,
             timeout=5
@@ -228,7 +238,7 @@ def check_phishtank(url):
             'app_key': API_KEYS['phishtank']
         }
         
-        response = requests.post(
+        response = cached_post(
             'https://checkurl.phishtank.com/checkurl/', 
             data=params,
             headers=headers,
@@ -294,7 +304,6 @@ def analyze_ssl_certificate(domain):
                 
                 # Check for OCSP stapling
                 has_ocsp_stapling = hasattr(ssock, 'ocsp_response') and ssock.ocsp_response is not None
-                import time
                 
                 # Parse certificate dates
                 date_format = r'%b %d %H:%M:%S %Y %Z'
@@ -374,7 +383,7 @@ def check_virustotal(url):
         
         # First, get the URL ID by submitting for analysis
         data = {"url": url}
-        response = requests.post(api_url, headers=headers, data=data, timeout=10)
+        response = cached_post(api_url, headers=headers, data=data, timeout=10)
         
         if response.status_code != 200:
             return None
@@ -390,7 +399,7 @@ def check_virustotal(url):
         
         # Get the analysis results
         analysis_url = f"https://www.virustotal.com/api/v3/analyses/{analysis_id}"
-        response = requests.get(analysis_url, headers=headers, timeout=10)
+        response = cached_get(analysis_url, headers=headers, timeout=10)
         
         if response.status_code != 200:
             return None
@@ -425,14 +434,16 @@ def check_google_safebrowsing(url):
                 "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"],
                 "platformTypes": ["ANY_PLATFORM"],
                 "threatEntryTypes": ["URL"],
-                "threatEntries": [{"url": url}]
+                "threatEntries": [
+                    {"url": url}
+                ]
             }
         }
-        
-        response = requests.post(api_url, json=payload, timeout=10)
-        result = response.json()
-        
-        matches = result.get('matches', [])
+        response = cached_post(api_url, json=payload, timeout=5)
+
+        if response.status_code == 200:
+                data = response.json()
+                matches = data.get('matches', [])
         
         if matches:
             return {
@@ -454,80 +465,120 @@ def check_urlscan(url):
         return None
         
     try:
-        # Submit URL for scanning
-        api_url = "https://urlscan.io/api/v1/scan/"
         headers = {
-            "API-Key": API_KEYS['urlscan'],
-            "Content-Type": "application/json"
-        }
-        data = {
-            "url": url,
-            "visibility": "private"  # Keep scan private
+            'API-Key': API_KEYS['urlscan'],
+            'Content-Type': 'application/json'
         }
         
-        response = requests.post(api_url, headers=headers, json=data, timeout=10)
+        # First, submit the URL for scanning
+        submit_response = cached_post(
+            'https://urlscan.io/api/v1/scan/',
+            headers=headers,
+            json={'url': url, 'visibility': 'public'},
+            timeout=10
+        )
         
-        if response.status_code != 200:
+        if submit_response.status_code not in [200, 400]: # 400 means already scanned
             return None
             
-        result = response.json()
-        scan_id = result.get('uuid')
+        submit_result = submit_response.json()
+        uuid = submit_result.get('uuid')
         
-        if not scan_id:
+        if not uuid:
+            # If already scanned, try to get the existing report
+            search_response = cached_get(
+                f'https://urlscan.io/api/v1/search/?q=url:{url}',
+                headers=headers,
+                timeout=10
+            )
+            if search_response.status_code == 200:
+                search_result = search_response.json()
+                if search_result.get('results'):
+                    uuid = search_result['results'][0]['uuid']
+            
+        if not uuid:
             return None
             
-        # Wait for scan to complete (this would be async in production)
-        time.sleep(10)
-        
-        # Get scan results
-        result_url = f"https://urlscan.io/api/v1/result/{scan_id}/"
-        response = requests.get(result_url, headers=headers, timeout=10)
-        
-        if response.status_code != 200:
-            return None
+        # Poll for the scan results
+        for _ in range(10): # Try up to 10 times
+            time.sleep(2) # Wait 2 seconds between polls
+            report_response = cached_get(
+                f'https://urlscan.io/api/v1/result/{uuid}/',
+                headers=headers,
+                timeout=10
+            )
             
-        result = response.json()
+            if report_response.status_code == 200:
+                report = report_response.json()
+                verdicts = report.get('data', {}).get('verdicts', {})
+                overall_verdict = verdicts.get('overall', {})
+                
+                return {
+                    'is_malicious': overall_verdict.get('malicious', False),
+                    'score': overall_verdict.get('score', 0),
+                    'categories': overall_verdict.get('categories', []),
+                    'urlscan_link': report.get('task', {}).get('reportURL')
+                }
+            elif report_response.status_code == 404: # Not found yet, continue polling
+                continue
+            else:
+                break # Other error, stop polling
         
-        return {
-            'is_malicious': result.get('verdicts', {}).get('overall', {}).get('malicious', False),
-            'score': result.get('verdicts', {}).get('overall', {}).get('score', 0),
-            'categories': result.get('verdicts', {}).get('overall', {}).get('categories', []),
-            'domain': result.get('page', {}).get('domain', ''),
-            'ip': result.get('page', {}).get('ip', '')
-        }
+        return None
     except Exception as e:
-        print(f"Error checking urlscan.io: {e}")
+        print(f"Error checking URLScan: {e}")
         return None
 
 def check_for_model_update():
     """Check if model needs to be updated based on feedback data"""
+    global current_model
     try:
-        # Check if it's time to update
-        if os.path.exists(LAST_UPDATE_PATH):
+        # Check if it's time to update or if model is not loaded yet
+        if current_model is None:
+            print("Model not loaded, attempting initial load or training.")
+            # Attempt to load existing model
+            model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_pipeline.pkl')
+            if os.path.exists(model_path):
+                current_model = joblib.load(model_path)
+                print("Model loaded successfully during check_for_model_update.")
+            else:
+                print("No existing model found. Will train a new one if enough feedback data.")
+
+        if current_model is not None and os.path.exists(LAST_UPDATE_PATH):
             with open(LAST_UPDATE_PATH, 'r') as f:
                 last_update = datetime.fromisoformat(f.read().strip())
                 if (datetime.now() - last_update).total_seconds() < MODEL_UPDATE_INTERVAL:
                     return False  # Not time to update yet
-        
-        # Check if we have enough feedback data
+        elif current_model is not None: # If no last update file, but model exists, create one
+            with open(LAST_UPDATE_PATH, 'w') as f:
+                f.write(datetime.now().isoformat())
+            return False
+
+        # If model is still None and no feedback data, can't do anything
         if not os.path.exists(FEEDBACK_DATA_PATH):
+            if current_model is None:
+                print("No feedback data and no existing model. Cannot update or train.")
             return False
             
         with open(FEEDBACK_DATA_PATH, 'r') as f:
             feedback_data = json.load(f)
             
         if len(feedback_data) < 10:  # Need at least 10 feedback items to update
+            if current_model is None:
+                print("Not enough feedback data to train a new model.")
             return False
             
         # Implement actual model update logic
         try:
-            # 1. Load the current model
-            current_model = joblib.load(MODEL_PATH)
+            # 1. Load the current model if not already loaded or if it needs retraining
+            if current_model is None:
+                current_model = OnlineLearningModel(feature_extractor=extractor)
+                print("Initialized new OnlineLearningModel for training.")
             
             # 2. Create a training dataset from feedback
             X_new = []
             y_new = []
-            
+        
             for item in feedback_data:
                 # Extract features from URL
                 url = item.get('url', '')
@@ -536,22 +587,11 @@ def check_for_model_update():
                     X_new.append(features)
                     # Use the corrected label from feedback
                     y_new.append(1 if item.get('is_phishing', False) else 0)
-            
+        
             if len(X_new) > 0:
-                # 3. Update the model with new data (partial_fit for incremental learning)
-                # Convert to DataFrame for pipeline compatibility
                 X_new_df = pd.DataFrame(X_new)
-                
-                # Update the model
-                if hasattr(current_model, 'partial_fit'):
-                    current_model.partial_fit(X_new_df, y_new)
-                else:
-                    # If model doesn't support partial_fit, we need to retrain
-                    # This is simplified - in production you'd want to combine with original training data
-                    current_model.fit(X_new_df, y_new)
-                
-                # 4. Save the updated model
-                joblib.dump(current_model, MODEL_PATH)
+                current_model.incremental_update(X_new_df, y_new)
+                current_model.save_model()
                 print(f"Model updated with {len(X_new)} new samples")
                 
                 # Clear processed feedback to avoid retraining on same data
@@ -569,6 +609,20 @@ def check_for_model_update():
     except Exception as e:
         print(f"Error checking for model update: {e}")
         return False
+
+current_model = None
+
+def load_model():
+    global current_model
+    model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_pipeline.pkl')
+    if os.path.exists(model_path):
+        current_model = joblib.load(model_path)
+        print("Model loaded successfully.")
+    else:
+        print("No model found at startup. Model will be initialized on first update or training.")
+
+with app.app_context():
+    load_model()
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -624,136 +678,146 @@ def predict():
                     'severity': 'medium'
                 })
         
-        # Check external APIs if requested
+        # Check external APIs asynchronously if requested
         if check_external_apis:
-            # Check VirusTotal
-            vt_result = check_virustotal(url)
-            if vt_result:
-                external_api_results['virustotal'] = vt_result
-                if vt_result.get('is_malicious'):
-                    threat_details.append({
-                        'type': 'virustotal_detection',
-                        'description': f"VirusTotal detected this URL as malicious ({vt_result.get('malicious', 0)} engines)",
-                        'severity': 'high'
-                    })
+            futures = []
             
-            # Check Google Safe Browsing
-            gsb_result = check_google_safebrowsing(url)
-            if gsb_result:
-                external_api_results['google_safebrowsing'] = gsb_result
-                if gsb_result.get('is_malicious'):
-                    threat_details.append({
-                        'type': 'safebrowsing_detection',
-                        'description': f"Google Safe Browsing detected this URL as {gsb_result.get('threat_type', 'malicious')}",
-                        'severity': 'high'
-                    })
+            # Submit VirusTotal check
+            futures.append(executor.submit(check_virustotal, url))
             
-            # Check URLScan.io
-            urlscan_result = check_urlscan(url)
-            if urlscan_result:
-                external_api_results['urlscan'] = urlscan_result
-                if urlscan_result.get('is_malicious'):
-                    categories = ', '.join(urlscan_result.get('categories', ['unknown']))
-                    threat_details.append({
-                        'type': 'urlscan_detection',
-                        'description': f"URLScan.io detected this URL as malicious (categories: {categories})",
-                        'severity': 'high'
-                    })
-        
-        # Simple heuristic scoring (replace with your model later)
-        risk_score = 0.1  # Base low risk
-        
-        # Risk factors with detailed threat information
-        if features['suspicious_keywords']:
-            risk_score += 0.4
-            threat_details.append({
-                'type': 'suspicious_keywords',
-                'description': 'URL contains suspicious keywords often used in phishing',
-                'severity': 'high'
-            })
+            # Submit Google Safe Browsing check
+            futures.append(executor.submit(check_google_safebrowsing, url))
             
-        if features['has_ip']:
-            risk_score += 0.3
-            threat_details.append({
-                'type': 'ip_address_url',
-                'description': 'URL uses an IP address instead of a domain name',
-                'severity': 'high'
-            })
+            # Submit URLScan.io check
+            futures.append(executor.submit(check_urlscan, url))
             
-        if not features['has_https']:
-            risk_score += 0.2
-            threat_details.append({
-                'type': 'no_https',
-                'description': 'Website does not use secure HTTPS connection',
-                'severity': 'medium'
-            })
+            # Submit OpenPhish check
+            futures.append(executor.submit(check_openphish, url))
             
-        if features['url_length'] > 100:
-            risk_score += 0.2
-            threat_details.append({
-                'type': 'excessive_length',
-                'description': 'URL is unusually long which may hide the true destination',
-                'severity': 'medium'
-            })
+            # Submit PhishTank check
+            futures.append(executor.submit(check_phishtank, url))
             
-        if features['num_hyphens'] > 3:
-            risk_score += 0.1
-            threat_details.append({
-                'type': 'excessive_hyphens',
-                'description': 'Domain contains many hyphens, often used in phishing domains',
-                'severity': 'low'
-            })
-        
-        # Adjust risk score based on external API results
-        if external_api_results:
-            # If any external API detected it as malicious, increase risk
-            if (external_api_results.get('virustotal', {}).get('is_malicious') or
-                external_api_results.get('google_safebrowsing', {}).get('is_malicious') or
-                external_api_results.get('urlscan', {}).get('is_malicious')):
-                risk_score = max(risk_score, 0.8)  # At least HIGH risk
-        
-        risk_score = min(risk_score, 1.0)
-        prediction = 1 if risk_score > 0.5 else 0
-        
-        # Risk level
-        if risk_score > 0.8:
-            risk_level = "VERY_HIGH"
-        elif risk_score > 0.6:
-            risk_level = "HIGH"
-        elif risk_score > 0.4:
-            risk_level = "MODERATE"
-        elif risk_score > 0.2:
-            risk_level = "LOW"
-        else:
-            risk_level = "VERY_LOW"
+            # Collect results
+            for future in futures:
+                result = future.result() # This will block until the result is ready
+                if result:
+                    if 'virustotal' in result.get('source', '').lower():
+                        external_api_results['virustotal'] = result
+                        if result.get('is_malicious'):
+                            threat_details.append({
+                                'type': 'virustotal_detection',
+                                'description': f"VirusTotal detected this URL as malicious ({result.get('malicious', 0)} engines)",
+                                'severity': 'high'
+                            })
+                    elif 'google_safebrowsing' in result.get('source', '').lower():
+                        external_api_results['google_safebrowsing'] = result
+                        if result.get('is_malicious'):
+                            threat_details.append({
+                                'type': 'safebrowsing_detection',
+                                'description': f"Google Safe Browsing detected this URL as {result.get('threat_type', 'malicious')}",
+                                'severity': 'high'
+                            })
+                    elif 'urlscan' in result.get('source', '').lower():
+                        external_api_results['urlscan'] = result
+                        if result.get('is_malicious'):
+                            threat_details.append({
+                                'type': 'urlscan_detection',
+                                'description': f"URLScan.io detected this URL as malicious ({result.get('categories', [])})",
+                                'severity': 'high'
+                            })
+                    elif 'openphish' in result.get('source', '').lower():
+                        external_api_results['openphish'] = result
+                        if result.get('is_malicious'):
+                            threat_details.append({
+                                'type': 'openphish_detection',
+                                'description': "OpenPhish detected this URL as phishing",
+                                'severity': 'high'
+                            })
+                    elif 'phishtank' in result.get('source', '').lower():
+                        external_api_results['phishtank'] = result
+                        if result.get('is_malicious'):
+                            threat_details.append({
+                                'type': 'phishtank_detection',
+                                'description': "PhishTank detected this URL as phishing",
+                                'severity': 'high'
+                            })
             
-        # Create detailed response
-        response = {
+            # Check for IP-based external APIs if domain is an IP address
+            if re.match(r'\d+\.\d+\.\d+\.\d+', domain):
+                abuseipdb_future = executor.submit(check_abuseipdb, domain)
+                abuseipdb_result = abuseipdb_future.result()
+                if abuseipdb_result:
+                    external_api_results['abuseipdb'] = abuseipdb_result
+                    if abuseipdb_result.get('is_malicious'):
+                        threat_details.append({
+                            'type': 'abuseipdb_detection',
+                            'description': f"AbuseIPDB detected this IP as malicious (score: {abuseipdb_result.get('confidence_score', 0)}%)",
+                            'severity': 'high'
+                        })
+            
+            # Check for email-based external APIs if email is present in URL
+            email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', url)
+            if email_match:
+                email = email_match.group(0)
+                emailrep_future = executor.submit(check_emailrep, email)
+                emailrep_result = emailrep_future.result()
+                if emailrep_result:
+                    external_api_results['emailrep'] = emailrep_result
+                    if emailrep_result.get('is_malicious'):
+                        threat_details.append({
+                            'type': 'emailrep_detection',
+                            'description': f"EmailRep detected this email as suspicious (reputation: {emailrep_result.get('reputation', 'Unknown')})",
+                            'severity': 'high'
+                        })
+
+        # Predict phishing likelihood
+        prediction, probability = current_model.predict(features)
+        is_phishing = bool(prediction[0])
+        phishing_probability = float(probability[0][1])
+
+        # Determine overall risk level
+        risk_level = "low"
+        if is_phishing or len(threat_details) > 0:
+            if phishing_probability > 0.7 or any(t['severity'] == 'high' for t in threat_details):
+                risk_level = "high"
+            elif phishing_probability > 0.4 or any(t['severity'] == 'medium' for t in threat_details):
+                risk_level = "medium"
+            else:
+                risk_level = "low"
+
+        response_data = {
             'url': url,
-            'prediction': prediction,
+            'is_phishing': is_phishing,
+            'phishing_probability': phishing_probability,
             'risk_level': risk_level,
-            'confidence': risk_score,
-            'probability_phishing': risk_score,
-            'probability_legitimate': 1.0 - risk_score,
             'threat_details': threat_details,
-            'analysis_timestamp': datetime.now().isoformat()
+            'certificate_analysis': cert_analysis,
+            'external_api_results': external_api_results
         }
-        
-        # Add certificate analysis if available
-        if cert_analysis:
-            response['certificate_analysis'] = cert_analysis
-            
-        # Add external API results if available
-        if external_api_results:
-            response['external_api_results'] = external_api_results
-            
-        return jsonify(response)
-        
+
+        # Store feedback data for continuous learning
+        feedback_item = {
+            'url': url,
+            'timestamp': datetime.now().isoformat(),
+            'is_phishing_predicted': is_phishing,
+            'phishing_probability': phishing_probability,
+            'is_phishing': None  # To be filled by user feedback
+        }
+        with open(FEEDBACK_DATA_PATH, 'a+') as f:
+            f.seek(0) # Go to the beginning of the file
+            try:
+                feedback_data = json.load(f)
+            except json.JSONDecodeError:
+                feedback_data = []
+            feedback_data.append(feedback_item)
+            f.seek(0) # Go to the beginning of the file again to overwrite
+            json.dump(feedback_data, f, indent=4)
+
+        return jsonify(response_data)
+
     except Exception as e:
-        return jsonify({
-            'error': 'Prediction error',
-            'message': str(e)
-        }), 500
+        print(f"Error in predict endpoint: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/check_email', methods=['POST'])
 def check_email():
@@ -776,10 +840,15 @@ def check_email():
                 'reasons': ['Invalid email format']
             })
         
-        # Check for suspicious patterns
         reasons = []
         risk_score = 0.1  # Base low risk
-        
+
+        # Perform external email reputation check
+        emailrep_result = check_emailrep(email)
+        if emailrep_result and emailrep_result.get('is_malicious'):
+            risk_score += 0.5 # Significant increase for malicious email
+            reasons.append(f"EmailRep detected this email as suspicious (reputation: {emailrep_result.get('reputation', 'Unknown')})")
+
         # Check username for suspicious patterns
         if len(username) > 20:
             risk_score += 0.1
@@ -829,31 +898,14 @@ def check_email():
             'is_phishing': is_phishing,
             'risk_level': risk_level,
             'confidence': risk_score,
-            'reasons': reasons
+            'reasons': reasons,
+            'external_api_results': {'emailrep': emailrep_result} if emailrep_result else {}
         })
         
     except Exception as e:
         return jsonify({
             'error': 'Email analysis error',
             'message': str(e)
-        }), 500
-        
-        return jsonify({
-            'url': url,
-            'prediction': prediction,
-            'prediction_label': 'Phishing' if prediction == 1 else 'Legitimate',
-            'probability_legitimate': float(1 - risk_score),
-            'probability_phishing': float(risk_score),
-            'risk_level': risk_level,
-            'confidence': float(max(risk_score, 1 - risk_score)),
-            'features_analyzed': len(features),
-            'timestamp': datetime.now().isoformat()
-        })
-    
-    except Exception as e:
-        return jsonify({
-            'error': f'Prediction failed: {str(e)}',
-            'url': url if 'url' in locals() else 'unknown'
         }), 500
 
 @app.route('/batch-predict', methods=['POST'])
@@ -868,26 +920,89 @@ def batch_predict():
         results = []
         for url in urls:
             try:
+                # Check if model needs to be updated
+                check_for_model_update()
+
+                # Extract features
                 features = extractor.extract_all_features(url)
-                
-                # Simple risk calculation
-                risk_score = 0.1
-                if features['suspicious_keywords']:
-                    risk_score += 0.4
-                if features['has_ip']:
-                    risk_score += 0.3
-                if not features['has_https']:
-                    risk_score += 0.2
-                
-                risk_score = min(risk_score, 1.0)
-                prediction = 1 if risk_score > 0.5 else 0
-                
+
+                # Predict phishing likelihood
+                prediction, probability = current_model.predict(features)
+                is_phishing = bool(prediction[0])
+                phishing_probability = float(probability[0][1])
+
+                # Determine overall risk level (simplified for batch, can be expanded)
+                risk_level = "low"
+                if is_phishing:
+                    if phishing_probability > 0.7:
+                        risk_level = "high"
+                    elif phishing_probability > 0.4:
+                        risk_level = "medium"
+
+                # Perform external API checks (can be made asynchronous for better performance in batch)
+                external_api_results = {}
+                threat_details = []
+
+                # Submit external API checks to the executor
+                futures = []
+                futures.append(executor.submit(check_virustotal, url))
+                futures.append(executor.submit(check_google_safebrowsing, url))
+                futures.append(executor.submit(check_urlscan, url))
+                futures.append(executor.submit(check_openphish, url))
+                futures.append(executor.submit(check_phishtank, url))
+
+                # Collect results
+                for future in futures:
+                    result = future.result()  # This will block until the result is ready
+                    if result:
+                        if 'virustotal' in result.get('source', '').lower():
+                            external_api_results['virustotal'] = result
+                            if result.get('is_malicious'):
+                                threat_details.append({
+                                    'type': 'virustotal_detection',
+                                    'description': f"VirusTotal detected this URL as malicious ({result.get('malicious', 0)} engines)",
+                                    'severity': 'high'
+                                })
+                        elif 'google_safebrowsing' in result.get('source', '').lower():
+                            external_api_results['google_safebrowsing'] = result
+                            if result.get('is_malicious'):
+                                threat_details.append({
+                                    'type': 'safebrowsing_detection',
+                                    'description': f"Google Safe Browsing detected this URL as {result.get('threat_type', 'malicious')}",
+                                    'severity': 'high'
+                                })
+                        elif 'urlscan' in result.get('source', '').lower():
+                            external_api_results['urlscan'] = result
+                            if result.get('is_malicious'):
+                                threat_details.append({
+                                    'type': 'urlscan_detection',
+                                    'description': f"URLScan.io detected this URL as malicious ({result.get('categories', [])})",
+                                    'severity': 'high'
+                                })
+                        elif 'openphish' in result.get('source', '').lower():
+                            external_api_results['openphish'] = result
+                            if result.get('is_malicious'):
+                                threat_details.append({
+                                    'type': 'openphish_detection',
+                                    'description': "OpenPhish detected this URL as phishing",
+                                    'severity': 'high'
+                                })
+                        elif 'phishtank' in result.get('source', '').lower():
+                            external_api_results['phishtank'] = result
+                            if result.get('is_malicious'):
+                                threat_details.append({
+                                    'type': 'phishtank_detection',
+                                    'description': "PhishTank detected this URL as phishing",
+                                    'severity': 'high'
+                                })
+
                 results.append({
                     'url': url,
-                    'prediction': prediction,
-                    'probability_legitimate': float(1 - risk_score),
-                    'probability_phishing': float(risk_score),
-                    'risk_level': 'HIGH' if risk_score > 0.6 else 'LOW'
+                    'is_phishing': is_phishing,
+                    'phishing_probability': phishing_probability,
+                    'risk_level': risk_level,
+                    'threat_details': threat_details,
+                    'external_api_results': external_api_results
                 })
                 
             except Exception as e:
@@ -904,6 +1019,15 @@ def batch_predict():
     
     except Exception as e:
         return jsonify({'error': f'Batch prediction failed: {str(e)}'}), 500
+
+@app.route('/explain', methods=['POST'])
+def explain():
+    url = request.json.get('url')
+    if not url:
+        return jsonify({'error': 'URL is required'}), 400
+
+    explanation = current_model.explain_prediction(url)
+    return jsonify(explanation)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
