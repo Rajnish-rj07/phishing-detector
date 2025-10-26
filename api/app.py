@@ -19,8 +19,6 @@ from sklearn.preprocessing import StandardScaler
 from urllib.parse import urlparse
 
 import tldextract
-from src.feature_extractor import EnhancedURLFeatureExtractor
-from src.online_mode import OnlineLearningModel
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": ["chrome-extension://ciingiplfdkjgggpekedijaiplefflik", "http://localhost:*", "https://phishing-detector-isnv.onrender.com"]}})
