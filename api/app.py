@@ -65,8 +65,7 @@ API_KEYS = {
     'openphish': os.environ.get('OPENPHISH_API_KEY', ''),
     'abuseipdb': os.environ.get('ABUSEIPDB_API_KEY', ''),
     'emailrep': os.environ.get('EMAILREP_API_KEY', ''),
-    'threatminer': os.environ.get('THREATMINER_API_KEY', ''),
-    'phishtank': os.environ.get('PHISHTANK_API_KEY', '')
+    'threatminer': os.environ.get('THREATMINER_API_KEY', '')
 }
 
 from src.feature_extractor import EnhancedURLFeatureExtractor
@@ -220,54 +219,6 @@ def check_emailrep(email):
             'error': f'Error checking EmailRep: {str(e)}',
             'is_malicious': False
         }
-
-def check_phishtank(url):
-    """Check URL against PhishTank database"""
-    if not API_KEYS['phishtank']:
-        return {'error': 'PhishTank API key not configured', 'is_malicious': False}
-    
-    try:
-        headers = {
-            'User-Agent': 'PhishingDetector',
-            'Accept': 'application/json'
-        }
-        
-        params = {
-            'url': url,
-            'format': 'json',
-            'app_key': API_KEYS['phishtank']
-        }
-        
-        response = cached_post(
-            'https://checkurl.phishtank.com/checkurl/', 
-            data=params,
-            headers=headers,
-            timeout=5
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            result = data.get('results', {})
-            is_phish = result.get('in_database', False)
-            
-            return {
-                'is_malicious': is_phish,
-                'verified': result.get('verified', False) if is_phish else False,
-                'source': 'PhishTank',
-                'details': result
-            }
-        else:
-            return {
-                'error': f'PhishTank API returned status code {response.status_code}',
-                'is_malicious': False
-            }
-    
-    except Exception as e:
-        return {
-            'error': f'Error checking PhishTank: {str(e)}',
-            'is_malicious': False
-        }
-
 def analyze_ssl_certificate(domain):
     """Analyze SSL certificate for a domain"""
     try:
@@ -695,7 +646,7 @@ def predict():
             futures.append(executor.submit(check_openphish, url))
             
             # Submit PhishTank check
-            futures.append(executor.submit(check_phishtank, url))
+            
             
             # Collect results
             for future in futures:
@@ -733,14 +684,7 @@ def predict():
                                 'description': "OpenPhish detected this URL as phishing",
                                 'severity': 'high'
                             })
-                    elif 'phishtank' in result.get('source', '').lower():
-                        external_api_results['phishtank'] = result
-                        if result.get('is_malicious'):
-                            threat_details.append({
-                                'type': 'phishtank_detection',
-                                'description': "PhishTank detected this URL as phishing",
-                                'severity': 'high'
-                            })
+
             
             # Check for IP-based external APIs if domain is an IP address
             if re.match(r'\d+\.\d+\.\d+\.\d+', domain):
@@ -949,7 +893,7 @@ def batch_predict():
                 futures.append(executor.submit(check_google_safebrowsing, url))
                 futures.append(executor.submit(check_urlscan, url))
                 futures.append(executor.submit(check_openphish, url))
-                futures.append(executor.submit(check_phishtank, url))
+                
 
                 # Collect results
                 for future in futures:
@@ -987,14 +931,7 @@ def batch_predict():
                                     'description': "OpenPhish detected this URL as phishing",
                                     'severity': 'high'
                                 })
-                        elif 'phishtank' in result.get('source', '').lower():
-                            external_api_results['phishtank'] = result
-                            if result.get('is_malicious'):
-                                threat_details.append({
-                                    'type': 'phishtank_detection',
-                                    'description': "PhishTank detected this URL as phishing",
-                                    'severity': 'high'
-                                })
+
 
                 results.append({
                     'url': url,
