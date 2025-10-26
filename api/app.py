@@ -19,6 +19,15 @@ from sklearn.preprocessing import StandardScaler
 from urllib.parse import urlparse
 
 import tldextract
+import requests
+import time
+import os
+import json
+import ssl
+import socket
+import pickle
+import joblib
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": ["chrome-extension://ciingiplfdkjgggpekedijaiplefflik", "http://localhost:*", "https://phishing-detector-isnv.onrender.com"]}})
@@ -629,105 +638,109 @@ def predict():
         
         # Check external APIs asynchronously if requested
         if check_external_apis:
-            futures = []
+            # Check VirusTotal
+            vt_result = check_virustotal(url)
+            if vt_result:
+                external_api_results['virustotal'] = vt_result
+                if vt_result.get('is_malicious'):
+                    threat_details.append({
+                        'type': 'virustotal_detection',
+                        'description': f"VirusTotal detected this URL as malicious ({vt_result.get('malicious', 0)} engines)",
+                        'severity': 'high'
+                    })
             
-            # Submit VirusTotal check
-            futures.append(executor.submit(check_virustotal, url))
+            # Check Google Safe Browsing
+            gsb_result = check_google_safebrowsing(url)
+            if gsb_result:
+                external_api_results['google_safebrowsing'] = gsb_result
+                if gsb_result.get('is_malicious'):
+                    threat_details.append({
+                        'type': 'safebrowsing_detection',
+                        'description': f"Google Safe Browsing detected this URL as {gsb_result.get('threat_type', 'malicious')}",
+                        'severity': 'high'
+                    })
             
-            # Submit Google Safe Browsing check
-            futures.append(executor.submit(check_google_safebrowsing, url))
+            # Check URLScan.io
+            urlscan_result = check_urlscan(url)
+            if urlscan_result:
+                external_api_results['urlscan'] = urlscan_result
+                if urlscan_result.get('is_malicious'):
+                    categories = ', '.join(urlscan_result.get('categories', ['unknown']))
+                    threat_details.append({
+                        'type': 'urlscan_detection',
+                        'description': f"URLScan.io detected this URL as malicious (categories: {categories})",
+                        'severity': 'high'
+                    })
+        
+        # Simple heuristic scoring (replace with your model later)
+        risk_score = 0.1  # Base low risk
+        
+        # Risk factors with detailed threat information
+        if features['suspicious_keywords']:
+            risk_score += 0.4
+            threat_details.append({
+                'type': 'suspicious_keywords',
+                'description': 'URL contains suspicious keywords often used in phishing',
+                'severity': 'high'
+            })
             
-            # Submit URLScan.io check
-            futures.append(executor.submit(check_urlscan, url))
+        if features['has_ip']:
+            risk_score += 0.3
+            threat_details.append({
+                'type': 'ip_address_url',
+                'description': 'URL uses an IP address instead of a domain name',
+                'severity': 'high'
+            })
             
-            # Submit OpenPhish check
-            futures.append(executor.submit(check_openphish, url))
+        if not features['has_https']:
+            risk_score += 0.2
+            threat_details.append({
+                'type': 'no_https',
+                'description': 'Website does not use secure HTTPS connection',
+                'severity': 'medium'
+            })
             
-            # Submit PhishTank check
+        if features['url_length'] > 100:
+            risk_score += 0.2
+            threat_details.append({
+                'type': 'excessive_length',
+                'description': 'URL is unusually long which may hide the true destination',
+                'severity': 'medium'
+            })
             
+        if features['num_hyphens'] > 3:
+            risk_score += 0.1
+            threat_details.append({
+                'type': 'excessive_hyphens',
+                'description': 'Domain contains many hyphens, often used in phishing domains',
+                'severity': 'low'
+            })
+        
+        # Adjust risk score based on external API results
+        if external_api_results:
+            # If any external API detected it as malicious, increase risk
+            if (external_api_results.get('virustotal', {}).get('is_malicious') or
+                external_api_results.get('google_safebrowsing', {}).get('is_malicious') or
+                external_api_results.get('urlscan', {}).get('is_malicious')):
+                risk_score = max(risk_score, 0.8)  # At least HIGH risk
+        
+        risk_score = min(risk_score, 1.0)
+        prediction = 1 if risk_score > 0.5 else 0
+        
+        # Risk level
+        if risk_score > 0.8:
+            risk_level = "VERY_HIGH"
+        elif risk_score > 0.6:
+            risk_level = "HIGH"
+        elif risk_score > 0.4:
+            risk_level = "MODERATE"
+        elif risk_score > 0.2:
+            risk_level = "LOW"
+        else:
+            risk_level = "VERY_LOW"
             
-            # Collect results
-            for future in futures:
-                result = future.result() # This will block until the result is ready
-                if result:
-                    if 'virustotal' in result.get('source', '').lower():
-                        external_api_results['virustotal'] = result
-                        if result.get('is_malicious'):
-                            threat_details.append({
-                                'type': 'virustotal_detection',
-                                'description': f"VirusTotal detected this URL as malicious ({result.get('malicious', 0)} engines)",
-                                'severity': 'high'
-                            })
-                    elif 'google_safebrowsing' in result.get('source', '').lower():
-                        external_api_results['google_safebrowsing'] = result
-                        if result.get('is_malicious'):
-                            threat_details.append({
-                                'type': 'safebrowsing_detection',
-                                'description': f"Google Safe Browsing detected this URL as {result.get('threat_type', 'malicious')}",
-                                'severity': 'high'
-                            })
-                    elif 'urlscan' in result.get('source', '').lower():
-                        external_api_results['urlscan'] = result
-                        if result.get('is_malicious'):
-                            threat_details.append({
-                                'type': 'urlscan_detection',
-                                'description': f"URLScan.io detected this URL as malicious ({result.get('categories', [])})",
-                                'severity': 'high'
-                            })
-                    elif 'openphish' in result.get('source', '').lower():
-                        external_api_results['openphish'] = result
-                        if result.get('is_malicious'):
-                            threat_details.append({
-                                'type': 'openphish_detection',
-                                'description': "OpenPhish detected this URL as phishing",
-                                'severity': 'high'
-                            })
-
-            
-            # Check for IP-based external APIs if domain is an IP address
-            if re.match(r'\d+\.\d+\.\d+\.\d+', domain):
-                abuseipdb_future = executor.submit(check_abuseipdb, domain)
-                abuseipdb_result = abuseipdb_future.result()
-                if abuseipdb_result:
-                    external_api_results['abuseipdb'] = abuseipdb_result
-                    if abuseipdb_result.get('is_malicious'):
-                        threat_details.append({
-                            'type': 'abuseipdb_detection',
-                            'description': f"AbuseIPDB detected this IP as malicious (score: {abuseipdb_result.get('confidence_score', 0)}%)",
-                            'severity': 'high'
-                        })
-            
-            # Check for email-based external APIs if email is present in URL
-            email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', url)
-            if email_match:
-                email = email_match.group(0)
-                emailrep_future = executor.submit(check_emailrep, email)
-                emailrep_result = emailrep_future.result()
-                if emailrep_result:
-                    external_api_results['emailrep'] = emailrep_result
-                    if emailrep_result.get('is_malicious'):
-                        threat_details.append({
-                            'type': 'emailrep_detection',
-                            'description': f"EmailRep detected this email as suspicious (reputation: {emailrep_result.get('reputation', 'Unknown')})",
-                            'severity': 'high'
-                        })
-
-        # Predict phishing likelihood
-        prediction, probability = current_model.predict(features)
-        is_phishing = bool(prediction[0])
-        phishing_probability = float(probability[0][1])
-
-        # Determine overall risk level
-        risk_level = "low"
-        if is_phishing or len(threat_details) > 0:
-            if phishing_probability > 0.7 or any(t['severity'] == 'high' for t in threat_details):
-                risk_level = "high"
-            elif phishing_probability > 0.4 or any(t['severity'] == 'medium' for t in threat_details):
-                risk_level = "medium"
-            else:
-                risk_level = "low"
-
-        response_data = {
+        # Create detailed response
+        response = {
             'url': url,
             'is_phishing': is_phishing,
             'phishing_probability': phishing_probability,
@@ -867,70 +880,19 @@ def batch_predict():
 
                 # Extract features
                 features = extractor.extract_all_features(url)
-
-                # Predict phishing likelihood
-                prediction, probability = current_model.predict(features)
-                is_phishing = bool(prediction[0])
-                phishing_probability = float(probability[0][1])
-
-                # Determine overall risk level (simplified for batch, can be expanded)
-                risk_level = "low"
-                if is_phishing:
-                    if phishing_probability > 0.7:
-                        risk_level = "high"
-                    elif phishing_probability > 0.4:
-                        risk_level = "medium"
-
-                # Perform external API checks (can be made asynchronous for better performance in batch)
-                external_api_results = {}
-                threat_details = []
-
-                # Submit external API checks to the executor
-                futures = []
-                futures.append(executor.submit(check_virustotal, url))
-                futures.append(executor.submit(check_google_safebrowsing, url))
-                futures.append(executor.submit(check_urlscan, url))
-                futures.append(executor.submit(check_openphish, url))
                 
-
-                # Collect results
-                for future in futures:
-                    result = future.result()  # This will block until the result is ready
-                    if result:
-                        if 'virustotal' in result.get('source', '').lower():
-                            external_api_results['virustotal'] = result
-                            if result.get('is_malicious'):
-                                threat_details.append({
-                                    'type': 'virustotal_detection',
-                                    'description': f"VirusTotal detected this URL as malicious ({result.get('malicious', 0)} engines)",
-                                    'severity': 'high'
-                                })
-                        elif 'google_safebrowsing' in result.get('source', '').lower():
-                            external_api_results['google_safebrowsing'] = result
-                            if result.get('is_malicious'):
-                                threat_details.append({
-                                    'type': 'safebrowsing_detection',
-                                    'description': f"Google Safe Browsing detected this URL as {result.get('threat_type', 'malicious')}",
-                                    'severity': 'high'
-                                })
-                        elif 'urlscan' in result.get('source', '').lower():
-                            external_api_results['urlscan'] = result
-                            if result.get('is_malicious'):
-                                threat_details.append({
-                                    'type': 'urlscan_detection',
-                                    'description': f"URLScan.io detected this URL as malicious ({result.get('categories', [])})",
-                                    'severity': 'high'
-                                })
-                        elif 'openphish' in result.get('source', '').lower():
-                            external_api_results['openphish'] = result
-                            if result.get('is_malicious'):
-                                threat_details.append({
-                                    'type': 'openphish_detection',
-                                    'description': "OpenPhish detected this URL as phishing",
-                                    'severity': 'high'
-                                })
-
-
+                # Simple risk calculation
+                risk_score = 0.1
+                if features['suspicious_keywords']:
+                    risk_score += 0.4
+                if features['has_ip']:
+                    risk_score += 0.3
+                if not features['has_https']:
+                    risk_score += 0.2
+                
+                risk_score = min(risk_score, 1.0)
+                prediction = 1 if risk_score > 0.5 else 0
+                
                 results.append({
                     'url': url,
                     'is_phishing': is_phishing,
