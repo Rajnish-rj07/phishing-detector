@@ -18,7 +18,9 @@ function updateUI(response) {
   document.getElementById('threat-details').style.display = 'none';
   document.getElementById('cert-analysis').style.display = 'none';
   document.getElementById('external-apis').style.display = 'none';
+  document.getElementById('model-explanation').style.display = 'none'; // Hide explanation section
   document.getElementById('details-btn').textContent = '🔍 View Details';
+  document.getElementById('loading-spinner').style.display = 'none'; // Hide spinner when UI updates
   
   // Check if this is an offline analysis
   const isOfflineMode = response.isOfflineAnalysis === true;
@@ -104,6 +106,9 @@ function updateUI(response) {
         
       threatDetailsContent.appendChild(threatElement);
     });
+    document.getElementById('threat-details').style.display = 'block'; // Show section if content exists
+  } else {
+    document.getElementById('threat-details').style.display = 'none'; // Hide section if no content
   }
     
   // Update certificate analysis if available
@@ -178,10 +183,13 @@ function updateUI(response) {
         </div>
       `;
     }
+    document.getElementById('cert-analysis').style.display = 'block'; // Show section if content exists
+  } else {
+    document.getElementById('cert-analysis').style.display = 'none'; // Hide section if no content
   }
     
   // Update external API results if available
-  if (response.externalApiResults) {
+  if (response.externalApiResults && Object.keys(response.externalApiResults).length > 0) {
     const apis = response.externalApiResults;
     const apisContent = document.getElementById('external-apis-content');
     apisContent.innerHTML = '';
@@ -269,6 +277,25 @@ function updateUI(response) {
       `;
       apisContent.appendChild(emailrepElement);
     }
+    document.getElementById('external-apis').style.display = 'block'; // Show section if content exists
+  } else {
+    document.getElementById('external-apis').style.display = 'none'; // Hide section if no content
+  }
+
+  // Update model explanation if available
+  if (response.modelExplanation && response.modelExplanation.length > 0) {
+    const explanationContent = document.getElementById('model-explanation-content');
+    explanationContent.innerHTML = '';
+
+    response.modelExplanation.forEach(item => {
+      const explanationElement = document.createElement('div');
+      explanationElement.style.marginBottom = '4px';
+      explanationElement.innerHTML = `<strong>${item.feature}</strong>: ${item.weight.toFixed(4)}`;
+      explanationContent.appendChild(explanationElement);
+    });
+    document.getElementById('model-explanation').style.display = 'block'; // Show section if content exists
+  } else {
+    document.getElementById('model-explanation').style.display = 'none'; // Hide section if no content
   }
   
   document.getElementById('last-checked').textContent = 'Just now';
@@ -290,10 +317,11 @@ document.addEventListener('DOMContentLoaded', function() {
       // Display current URL
       document.getElementById('current-url').textContent = currentUrl;
       
-      // Show loading state
+      // Show loading state and spinner
       document.getElementById('status').textContent = 'Checking...';
       document.getElementById('status').className = 'status-checking';
       document.getElementById('confidence').textContent = 'Analyzing URL security...';
+      document.getElementById('loading-spinner').style.display = 'block'; // Show spinner
       
       // Set timeout for API response
       let responseTimeout = setTimeout(() => {
@@ -306,7 +334,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
       }, 5000); // 5 second timeout
       
-      // Check the URL
+      // Check the URL and get explanation
       chrome.runtime.sendMessage({action: 'checkURL', url: currentUrl}, function(response) {
         clearTimeout(responseTimeout); // Clear the timeout
         console.log('Received response:', response);
@@ -317,7 +345,23 @@ document.addEventListener('DOMContentLoaded', function() {
             isOfflineAnalysis: true
           });
         } else {
-          updateUI(response);
+          // Fetch explanation
+          fetch('http://localhost:5000/explain', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({url: currentUrl})
+          })
+          .then(response => response.json())
+          .then(explanation => {
+            response.modelExplanation = explanation;
+            updateUI(response);
+          })
+          .catch(error => {
+            console.error('Error fetching explanation:', error);
+            updateUI(response); // Update UI without explanation if fetch fails
+          });
         }
       });
     });
@@ -334,11 +378,35 @@ document.addEventListener('DOMContentLoaded', function() {
           updateUI({error: 'No active tab found'});
           return;
         }
-        chrome.runtime.sendMessage({action: 'checkURL', url: tabs[0].url}, function(response) {
+        const currentUrl = tabs[0].url;
+        
+        // Show loading state and spinner
+        document.getElementById('status').textContent = 'Checking...';
+        document.getElementById('status').className = 'status-checking';
+        document.getElementById('confidence').textContent = 'Analyzing URL security...';
+        document.getElementById('loading-spinner').style.display = 'block'; // Show spinner
+
+        chrome.runtime.sendMessage({action: 'checkURL', url: currentUrl}, function(response) {
           if (chrome.runtime.lastError) {
             updateUI({error: chrome.runtime.lastError.message});
           } else {
-            updateUI(response);
+            // Fetch explanation
+            fetch('http://localhost:5000/explain', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({url: currentUrl})
+            })
+            .then(response => response.json())
+            .then(explanation => {
+              response.modelExplanation = explanation;
+              updateUI(response);
+            })
+            .catch(error => {
+              console.error('Error fetching explanation:', error);
+              updateUI(response); // Update UI without explanation if fetch fails
+            });
           }
         });
       });
@@ -362,6 +430,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const threatDetails = document.getElementById('threat-details');
     const certAnalysis = document.getElementById('cert-analysis');
     const externalApis = document.getElementById('external-apis');
+    const modelExplanation = document.getElementById('model-explanation');
     
     // Toggle visibility with forced display
     if (threatDetails.style.display === 'none') {
@@ -369,11 +438,13 @@ document.addEventListener('DOMContentLoaded', function() {
       threatDetails.style.display = 'block';
       certAnalysis.style.display = 'block';
       externalApis.style.display = 'block';
+      modelExplanation.style.display = 'block'; // Show model explanation
       
       // Ensure content is visible
       document.getElementById('threat-details-content').style.display = 'block';
       document.getElementById('cert-analysis-content').style.display = 'block';
       document.getElementById('external-apis-content').style.display = 'block';
+      document.getElementById('model-explanation-content').style.display = 'block'; // Show model explanation content
       
       this.textContent = '🔍 Hide Details';
       this.style.backgroundColor = '#dc3545';
@@ -381,6 +452,7 @@ document.addEventListener('DOMContentLoaded', function() {
       threatDetails.style.display = 'none';
       certAnalysis.style.display = 'none';
       externalApis.style.display = 'none';
+      modelExplanation.style.display = 'none'; // Hide model explanation
       this.textContent = '🔍 View Details';
       this.style.backgroundColor = '#28a745';
     }
@@ -397,11 +469,33 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
       }
       
+      // Show loading state and spinner
+      document.getElementById('status').textContent = 'Checking...';
+      document.getElementById('status').className = 'status-checking';
+      document.getElementById('confidence').textContent = 'Analyzing URL security...';
+      document.getElementById('loading-spinner').style.display = 'block'; // Show spinner
+
       chrome.runtime.sendMessage({action: 'checkURL', url: url}, function(response) {
         if (chrome.runtime.lastError) {
           updateUI({error: chrome.runtime.lastError.message});
         } else {
-          updateUI(response);
+          // Fetch explanation
+          fetch('http://localhost:5000/explain', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({url: url})
+          })
+          .then(response => response.json())
+          .then(explanation => {
+            response.modelExplanation = explanation;
+            updateUI(response);
+          })
+          .catch(error => {
+            console.error('Error fetching explanation:', error);
+            updateUI(response); // Update UI without explanation if fetch fails
+          });
         }
       });
     } catch (error) {

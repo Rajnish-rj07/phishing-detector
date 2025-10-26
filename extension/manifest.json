@@ -31,7 +31,7 @@
   
   "web_accessible_resources": [
     {
-      "resources": ["css/*", "history.html"],
+      "resources": ["css/*", "history.html", "icons/phishing_shield_logo.svg"],
       "matches": ["<all_urls>"]
     }
   ],
