@@ -28,8 +28,11 @@ import socket
 import pickle
 import joblib
 from datetime import datetime, timedelta
-from src.online_model import OnlineLearningModel # Import OnlineLearningModel
+from src.feature_extractor import EnhancedURLFeatureExtractor
+from src.online_mode import OnlineLearningModel # Import OnlineLearningModel
 
+# Initialize logging
+logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": ["chrome-extension://ciingiplfdkjgggpekedijaiplefflik", "http://localhost:*", "https://phishing-detector-isnv.onrender.com"]}})
 
