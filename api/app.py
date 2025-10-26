@@ -75,11 +75,6 @@ API_KEYS = {
     'threatminer': os.environ.get('THREATMINER_API_KEY', '')
 }
 
-from src.feature_extractor import EnhancedURLFeatureExtractor
-
-# Initialize
-extractor = EnhancedURLFeatureExtractor()
-
 @app.route('/', methods=['GET'])
 def index():
     return jsonify({
