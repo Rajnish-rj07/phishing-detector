@@ -2,34 +2,146 @@ const API_URL = 'https://phishing-detector-isnv.onrender.com';
 const TEST_MODE = false; // Disabled test mode for real detection
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache for URLs
 const MAX_RETRIES = 3;
-const RETRY_DELAY = 1000; // 1 second delay between retries
+const RETRY_DELAY = 2000; // 2 seconds delay between retries
+const HEALTH_CHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes between health checks
 const urlCache = new Map(); // Cache for URL check results
-const OFFLINE_MODE = false; // Disable offline mode to use real-time API checks
 let isApiAvailable = true; // Assume API is available by default
+let lastHealthCheckTime = 0;
 
-// Function to check API availability
-function checkApiAvailability() {
-  fetch(`${API_URL}/health`, { method: 'GET' })
-    .then(response => {
-      if (response.ok) {
-        console.log('API is available');
-        isApiAvailable = true;
-      } else {
-        console.log('API is not available');
-        isApiAvailable = false;
+// Function to check API availability with rate limiting
+async function checkApiAvailability() {
+  const now = Date.now();
+  if (now - lastHealthCheckTime < HEALTH_CHECK_INTERVAL) {
+    return; // Skip if last check was too recent
+  }
+  
+  try {
+    const response = await fetch(`${API_URL}/health`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
       }
-    })
-    .catch(error => {
-      console.log('API check failed:', error);
-      isApiAvailable = false;
     });
+    
+    if (response.ok) {
+      console.log('API is available');
+      isApiAvailable = true;
+    } else {
+      console.log('API returned error status:', response.status);
+      isApiAvailable = false;
+    }
+  } catch (error) {
+    console.log('API check failed:', error);
+    isApiAvailable = false;
+  }
+  
+  lastHealthCheckTime = now;
 }
-
-// Check API availability every 30 seconds to ensure real-time operation
-setInterval(checkApiAvailability, 30000);
 
 // Initial API check
 checkApiAvailability();
+
+// Periodic health check with reduced frequency
+setInterval(checkApiAvailability, HEALTH_CHECK_INTERVAL);
+
+// Enhanced URL checking function with better error handling
+async function checkUrlWithAPI(url) {
+  if (!url) {
+    console.error('No URL provided');
+    return {
+      error: 'No URL provided',
+      isPhishing: false,
+      riskLevel: 'UNKNOWN',
+      confidence: 0
+    };
+  }
+  
+  // Check cache first
+  const cachedResult = checkCache(url);
+  if (cachedResult && !TEST_MODE) {
+    console.log('Using cached result for:', url);
+    return cachedResult;
+  }
+  
+  let retries = 0;
+  while (retries < MAX_RETRIES) {
+    try {
+      // First try the main prediction endpoint
+      const response = await fetch(`${API_URL}/predict`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          url: url,
+          check_external_apis: true
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status} - ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      console.log('API response:', data);
+      
+      // Cache successful result
+      const result = {
+        url: url,
+        isPhishing: data.prediction === 1,
+        riskLevel: data.risk_level || 'UNKNOWN',
+        confidence: Math.round((data.confidence || 0) * 100),
+        threatDetails: data.threat_details || [],
+        certificateAnalysis: data.certificate_analysis || null,
+        externalApiResults: data.external_api_results || null,
+        timestamp: new Date().toISOString()
+      };
+      
+      cacheResult(url, result);
+      return result;
+      
+    } catch (error) {
+      console.error(`API check failed (attempt ${retries + 1}/${MAX_RETRIES}):`, error);
+      
+      if (retries < MAX_RETRIES - 1) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+        retries++;
+        continue;
+      }
+      
+      // If all retries failed, use offline mode
+      console.log('All API attempts failed, using offline analysis');
+      const offlineResult = analyzeUrlLocally(url);
+      return {
+        ...offlineResult,
+        error: 'API server is not available. Using offline detection mode.',
+        details: error.message
+      };
+    }
+  }
+}
+
+// Message handler for URL checks
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'checkURL') {
+    checkUrlWithAPI(request.url)
+      .then(result => {
+        console.log('Check result:', result);
+        sendResponse(result);
+      })
+      .catch(error => {
+        console.error('Error checking URL:', error);
+        sendResponse({
+          error: error.message,
+          isPhishing: false,
+          riskLevel: 'UNKNOWN',
+          confidence: 0
+        });
+      });
+    return true; // Keep message channel open
+  }
+});
 
 // Function to check if a string is an email
 function isEmail(text) {

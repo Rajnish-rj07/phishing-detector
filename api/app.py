@@ -36,7 +36,7 @@ from src.online_mode import OnlineLearningModel # Import OnlineLearningModel
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": ["chrome-extension://ciingiplfdkjgggpekedijaiplefflik", "http://localhost:*", "https://phishing-detector-isnv.onrender.com"]}})
+CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins for development
 
 # Initialize ThreadPoolExecutor for async tasks
 executor = ThreadPoolExecutor(max_workers=5)
@@ -181,153 +181,386 @@ def check_abuseipdb(ip):
         }
 
 def check_emailrep(email):
-    """Check email reputation with EmailRep.io"""
+    """Check email reputation using EmailRep API"""
     if not API_KEYS['emailrep']:
-        return {'error': 'EmailRep API key not configured', 'is_malicious': False}
+        return {'error': 'EmailRep API key not configured'}
     
     try:
         headers = {
             'Key': API_KEYS['emailrep'],
-            'Accept': 'application/json',
+            'User-Agent': 'PhishingDetector/1.0'
         }
-        response = cached_get(
+        response = requests.get(
             f'https://emailrep.io/{email}',
             headers=headers,
-            timeout=5
+            timeout=10
         )
         
         if response.status_code == 200:
             data = response.json()
             return {
-                'is_malicious': data.get('suspicious', False),
-                'reputation': data.get('reputation', 'Unknown'),
+                'reputation': data.get('reputation', 'unknown'),
+                'suspicious': data.get('suspicious', False),
                 'details': {
-                    'first_seen': data.get('first_seen', 'Unknown'),
-                    'last_seen': data.get('last_seen', 'Unknown'),
-                    'suspicious': data.get('suspicious', False),
-                    'spam': data.get('details', {}).get('spam', False),
-                    'free_provider': data.get('details', {}).get('free_provider', False),
-                    'disposable': data.get('details', {}).get('disposable', False),
-                    'deliverable': data.get('details', {}).get('deliverable', False),
-                    'spoofable': data.get('details', {}).get('spoofable', False),
-                    'malicious_activity': data.get('details', {}).get('malicious_activity', False),
-                    'malicious_activity_recent': data.get('details', {}).get('malicious_activity_recent', False),
                     'blacklisted': data.get('details', {}).get('blacklisted', False),
-                    'credentials_leaked': data.get('details', {}).get('credentials_leaked', False),
-                    'data_breach': data.get('details', {}).get('data_breach', False)
+                    'malicious_activity': data.get('details', {}).get('malicious_activity', False),
+                    'recent_suspicious_activity': data.get('details', {}).get('recent_suspicious_activity', False),
+                    'spam': data.get('details', {}).get('spam', False),
+                    'disposable': data.get('details', {}).get('disposable', False),
+                    'spoofable': data.get('details', {}).get('spoofable', False),
+                    'profiles': data.get('details', {}).get('profiles', []),
+                    'domain_exists': data.get('details', {}).get('domain_exists', False),
+                    'domain_reputation': data.get('details', {}).get('domain_reputation', 'unknown'),
+                    'first_seen': data.get('details', {}).get('first_seen', 'unknown'),
+                    'last_seen': data.get('details', {}).get('last_seen', 'unknown')
                 }
             }
         else:
-            return {
-                'error': f'EmailRep API returned status code {response.status_code}',
-                'is_malicious': False
-            }
-    except Exception as e:
-        return {
-            'error': f'Error checking EmailRep: {str(e)}',
-            'is_malicious': False
-        }
-def analyze_ssl_certificate(domain):
-    """Analyze SSL certificate for a domain"""
-    try:
-        # Remove protocol if present
-        if '://' in domain:
-            domain = domain.split('://', 1)[1]
-        
-        # Remove path if present
-        if '/' in domain:
-            domain = domain.split('/', 1)[0]
+            return {'error': f'EmailRep API returned status code {response.status_code}'}
             
-        context = ssl.create_default_context()
-        with socket.create_connection((domain, 443), timeout=3) as sock:
-            with context.wrap_socket(sock, server_hostname=domain) as ssock:
-                cert = ssock.getpeercert()
-                
-                # Extract certificate information
-                issuer = dict(x[0] for x in cert['issuer'])
-                subject = dict(x[0] for x in cert['subject'])
-                not_before = cert['notBefore']
-                not_after = cert['notAfter']
-                
-                # Calculate certificate age and validity period
-                from datetime import datetime
-                
-                # Check for advanced security features
-                has_extended_validation = 'organizationIdentifier' in subject
-                signature_algorithm = ssock.context.get_ciphers()[0].get('alg', 'Unknown')
-                cipher_suite = ssock.cipher()[0]
-                tls_version = ssock.version()
-                
-                # Check for certificate transparency
-                has_sct = 'scts' in cert
-                
-                # Check for OCSP stapling
-                has_ocsp_stapling = hasattr(ssock, 'ocsp_response') and ssock.ocsp_response is not None
-                
-                # Parse certificate dates
-                date_format = r'%b %d %H:%M:%S %Y %Z'
-                not_before_date = datetime.strptime(not_before, date_format)
-                not_after_date = datetime.strptime(not_after, date_format)
-                
-                # Calculate age and remaining validity
-                current_date = datetime.now()
-                cert_age_days = (current_date - not_before_date).days
-                remaining_days = (not_after_date - current_date).days
-                
-                # Evaluate overall security score (0-100)
-                security_score = 100
-                
-                # Deduct points for security issues
-                if remaining_days < 0:
-                    security_score -= 50
-                if issuer.get('commonName') == subject.get('commonName'):
-                    security_score -= 40
-                if (not_after_date - not_before_date).days < 90:
-                    security_score -= 10
-                if not has_extended_validation:
-                    security_score -= 10
-                if not has_sct:
-                    security_score -= 5
-                if not has_ocsp_stapling:
-                    security_score -= 5
-                
-                # Ensure score is within bounds
-                security_score = max(0, min(100, security_score))
-                
-                # Determine security level
-                if security_score >= 80:
-                    security_level = "HIGH"
-                elif security_score >= 60:
-                    security_level = "MEDIUM"
-                else:
-                    security_level = "LOW"
-                
-                return {
-                    'valid': True,
-                    'issuer': issuer.get('organizationName', 'Unknown'),
-                    'subject': subject.get('commonName', 'Unknown'),
-                    'age_days': cert_age_days,
-                    'remaining_days': remaining_days,
-                    'is_expired': remaining_days < 0,
-                    'is_self_signed': issuer.get('commonName') == subject.get('commonName'),
-                    'is_short_lived': (not_after_date - not_before_date).days < 90,
-                    'valid_until': not_after_date.strftime('%Y-%m-%d'),
-                    'security_score': security_score,
-                    'security_level': security_level,
-                    'advanced_security': {
-                        'has_extended_validation': has_extended_validation,
-                        'signature_algorithm': signature_algorithm,
-                        'cipher_suite': cipher_suite,
-                        'tls_version': tls_version,
-                        'has_certificate_transparency': has_sct,
-                        'has_ocsp_stapling': has_ocsp_stapling
-                    }
-                }
+    except Exception as e:
+        return {'error': f'Error checking EmailRep: {str(e)}'}
+
+@app.route('/api/check_email', methods=['POST'])
+def analyze_email():
+    """Analyze email address for potential threats"""
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        
+        if not email:
+            return jsonify({'error': 'Email address is required'}), 400
+            
+        # Check if EmailRep API key is configured
+        if not API_KEYS['emailrep']:
+            return jsonify({'error': 'EmailRep API key not configured'}), 400
+            
+        # Get email reputation data
+        email_rep_data = check_emailrep(email)
+        
+        if 'error' in email_rep_data:
+            return jsonify(email_rep_data), 400
+            
+        # Prepare response with detailed analysis
+        response = {
+            'email': email,
+            'timestamp': datetime.now().isoformat(),
+            'reputation_data': email_rep_data,
+            'risk_assessment': {
+                'risk_level': calculate_email_risk_level(email_rep_data),
+                'suspicious_indicators': get_suspicious_indicators(email_rep_data)
+            }
+        }
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logging.error(f"Error analyzing email: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+def calculate_email_risk_level(email_data):
+    """Calculate risk level based on email reputation data"""
+    risk_score = 0
+    
+    # Check suspicious indicators
+    if email_data.get('suspicious', False):
+        risk_score += 30
+    
+    details = email_data.get('details', {})
+    
+    # Add points for various risk factors
+    if details.get('blacklisted', False):
+        risk_score += 25
+    if details.get('malicious_activity', False):
+        risk_score += 20
+    if details.get('recent_suspicious_activity', False):
+        risk_score += 15
+    if details.get('spam', False):
+        risk_score += 10
+    if details.get('disposable', False):
+        risk_score += 10
+    if details.get('spoofable', False):
+        risk_score += 10
+    
+    # Determine risk level
+    if risk_score >= 70:
+        return 'High'
+    elif risk_score >= 40:
+        return 'Medium'
+    elif risk_score > 0:
+        return 'Low'
+    return 'Safe'
+
+def get_suspicious_indicators(email_data):
+    """Extract suspicious indicators from email reputation data"""
+    indicators = []
+    details = email_data.get('details', {})
+    
+    if email_data.get('suspicious', False):
+        indicators.append('Suspicious activity detected')
+    if details.get('blacklisted', False):
+        indicators.append('Email is blacklisted')
+    if details.get('malicious_activity', False):
+        indicators.append('Malicious activity detected')
+    if details.get('recent_suspicious_activity', False):
+        indicators.append('Recent suspicious activity')
+    if details.get('spam', False):
+        indicators.append('Associated with spam')
+    if details.get('disposable', False):
+        indicators.append('Disposable email service')
+    if details.get('spoofable', False):
+        indicators.append('Email can be spoofed')
+    if not details.get('domain_exists', True):
+        indicators.append('Domain does not exist')
+    
+    return indicators
+def validate_api_keys():
+    """Validate that all required API keys are present"""
+    missing_keys = []
+    for service, key in API_KEYS.items():
+        if not key:
+            missing_keys.append(service)
+    return missing_keys
+
+def check_ssl_certificate(domain):
+    """Analyze SSL certificate of the domain"""
+    try:
+        response = requests.get(f'https://{domain}', verify=True, timeout=5)
+        cert = response.raw.connection.sock.getpeercert()
+        return {
+            'valid': True,
+            'issuer': dict(x[0] for x in cert['issuer']),
+            'subject': dict(x[0] for x in cert['subject']),
+            'expiry': cert['notAfter']
+        }
     except Exception as e:
         return {
             'valid': False,
             'error': str(e)
         }
+
+def aggregate_threat_details(url, domain, emails=None):
+    """Aggregate threat details from all available sources"""
+    threat_details = {
+        'url': url,
+        'domain': domain,
+        'timestamp': datetime.now().isoformat(),
+        'risk_level': 'Unknown',
+        'threat_indicators': [],
+        'security_checks': {
+            'ssl_certificate': None,
+            'virustotal': None,
+            'google_safebrowsing': None,
+            'urlscan': None,
+            'abuseipdb': None
+        },
+        'email_analysis': {},
+        'recommendations': []
+    }
+    
+    # Check SSL Certificate
+    ssl_result = check_ssl_certificate(domain)
+    threat_details['security_checks']['ssl_certificate'] = ssl_result
+    if ssl_result.get('error'):
+        threat_details['threat_indicators'].append('SSL Certificate issues detected')
+        threat_details['recommendations'].append('Verify SSL certificate configuration')
+    
+    # VirusTotal Check
+    if API_KEYS['virustotal']:
+        vt_result = check_virustotal(url)
+        threat_details['security_checks']['virustotal'] = vt_result
+        if vt_result.get('malicious', 0) > 0:
+            threat_details['threat_indicators'].append(
+                f'VirusTotal: {vt_result.get("malicious", 0)} security vendors flagged as malicious'
+            )
+    
+    # Google Safe Browsing Check
+    if API_KEYS['safebrowsing']:
+        gsb_result = check_google_safebrowsing(url)
+        threat_details['security_checks']['google_safebrowsing'] = gsb_result
+        if gsb_result.get('matches'):
+            threat_details['threat_indicators'].append('Google Safe Browsing: Threats detected')
+    
+    # URLScan Check
+    if API_KEYS['urlscan']:
+        urlscan_result = check_urlscan(url)
+        threat_details['security_checks']['urlscan'] = urlscan_result
+        if urlscan_result.get('malicious'):
+            threat_details['threat_indicators'].append('URLScan: Malicious indicators found')
+    
+    # AbuseIPDB Check
+    if API_KEYS['abuseipdb']:
+        abuse_result = check_abuseipdb(domain)
+        threat_details['security_checks']['abuseipdb'] = abuse_result
+        if abuse_result.get('abuseConfidenceScore', 0) > 25:
+            threat_details['threat_indicators'].append(
+                f'AbuseIPDB: Abuse confidence score {abuse_result.get("abuseConfidenceScore")}%'
+            )
+    
+    # Email Analysis
+    if emails and API_KEYS['emailrep']:
+        threat_details['email_analysis'] = {}
+        for email in emails:
+            email_result = check_emailrep(email)
+            threat_details['email_analysis'][email] = {
+                'reputation': email_result.get('reputation'),
+                'risk_level': calculate_email_risk_level(email_result),
+                'indicators': get_suspicious_indicators(email_result)
+            }
+            if email_result.get('suspicious'):
+                threat_details['threat_indicators'].append(f'Suspicious email detected: {email}')
+    
+    # Calculate overall risk level
+    threat_details['risk_level'] = calculate_overall_risk_level(threat_details)
+    
+    # Generate recommendations
+    threat_details['recommendations'].extend(generate_security_recommendations(threat_details))
+    
+    return threat_details
+
+def calculate_overall_risk_level(threat_details):
+    """Calculate overall risk level based on all security checks"""
+    risk_score = 0
+    
+    # Count threat indicators
+    risk_score += len(threat_details['threat_indicators']) * 10
+    
+    # Check VirusTotal results
+    vt_results = threat_details['security_checks']['virustotal']
+    if vt_results and vt_results.get('malicious', 0) > 0:
+        risk_score += min(vt_results.get('malicious', 0) * 5, 30)
+    
+    # Check Google Safe Browsing results
+    gsb_results = threat_details['security_checks']['google_safebrowsing']
+    if gsb_results and gsb_results.get('matches'):
+        risk_score += 30
+    
+    # Check URLScan results
+    urlscan_results = threat_details['security_checks']['urlscan']
+    if urlscan_results and urlscan_results.get('malicious'):
+        risk_score += 25
+    
+    # Check AbuseIPDB score
+    abuse_results = threat_details['security_checks']['abuseipdb']
+    if abuse_results:
+        risk_score += min(abuse_results.get('abuseConfidenceScore', 0) / 2, 25)
+    
+    # Check SSL certificate issues
+    ssl_results = threat_details['security_checks']['ssl_certificate']
+    if ssl_results and ssl_results.get('error'):
+        risk_score += 15
+    
+    # Check email analysis
+    for email_result in threat_details['email_analysis'].values():
+        if email_result['risk_level'] == 'High':
+            risk_score += 20
+        elif email_result['risk_level'] == 'Medium':
+            risk_score += 10
+        elif email_result['risk_level'] == 'Low':
+            risk_score += 5
+    
+    # Determine risk level
+    if risk_score >= 70:
+        return 'Critical'
+    elif risk_score >= 50:
+        return 'High'
+    elif risk_score >= 30:
+        return 'Medium'
+    elif risk_score > 0:
+        return 'Low'
+    return 'Safe'
+
+def generate_security_recommendations(threat_details):
+    """Generate security recommendations based on threat analysis"""
+    recommendations = []
+    
+    # SSL Certificate recommendations
+    ssl_results = threat_details['security_checks']['ssl_certificate']
+    if ssl_results and ssl_results.get('error'):
+        recommendations.append('Update SSL certificate configuration')
+        recommendations.append('Ensure proper SSL certificate installation')
+    
+    # VirusTotal recommendations
+    vt_results = threat_details['security_checks']['virustotal']
+    if vt_results and vt_results.get('malicious', 0) > 0:
+        recommendations.append('Investigate and address malware indicators')
+        recommendations.append('Scan website for malicious content')
+    
+    # Google Safe Browsing recommendations
+    gsb_results = threat_details['security_checks']['google_safebrowsing']
+    if gsb_results and gsb_results.get('matches'):
+        recommendations.append('Address security issues flagged by Google Safe Browsing')
+        recommendations.append('Submit site for review after fixing security issues')
+    
+    # URLScan recommendations
+    urlscan_results = threat_details['security_checks']['urlscan']
+    if urlscan_results and urlscan_results.get('malicious'):
+        recommendations.append('Review and address suspicious URL patterns')
+        recommendations.append('Implement URL filtering and monitoring')
+    
+    # AbuseIPDB recommendations
+    abuse_results = threat_details['security_checks']['abuseipdb']
+    if abuse_results and abuse_results.get('abuseConfidenceScore', 0) > 25:
+        recommendations.append('Investigate reported abuse incidents')
+        recommendations.append('Implement IP-based security controls')
+    
+    # Email security recommendations
+    for email, email_result in threat_details['email_analysis'].items():
+        if email_result['risk_level'] in ['High', 'Medium']:
+            recommendations.append(f'Investigate suspicious email: {email}')
+            recommendations.append('Implement additional email security measures')
+    
+    # General security recommendations
+    if len(threat_details['threat_indicators']) > 0:
+        recommendations.append('Enable real-time security monitoring')
+        recommendations.append('Implement regular security assessments')
+        recommendations.append('Update security policies and procedures')
+    
+    return list(set(recommendations))  # Remove duplicates
+
+@app.route('/api/analyze', methods=['POST'])
+def analyze_url():
+    """Analyze URL for potential threats"""
+    try:
+        data = request.get_json()
+        url = data.get('url')
+        emails = data.get('emails', [])
+        
+        if not url:
+            return jsonify({'error': 'URL is required'}), 400
+        
+        # Extract domain from URL
+        domain = extract_domain(url)
+        if not domain:
+            return jsonify({'error': 'Invalid URL format'}), 400
+        
+        # Validate API keys
+        missing_keys = validate_api_keys()
+        if missing_keys:
+            logging.warning(f"Missing API keys: {', '.join(missing_keys)}")
+        
+        # Get comprehensive threat analysis
+        threat_analysis = aggregate_threat_details(url, domain, emails)
+        
+        # Prepare response
+        response = {
+            'url': url,
+            'domain': domain,
+            'timestamp': datetime.now().isoformat(),
+            'risk_level': threat_analysis['risk_level'],
+            'threat_indicators': threat_analysis['threat_indicators'],
+            'security_checks': threat_analysis['security_checks'],
+            'recommendations': threat_analysis['recommendations']
+        }
+        
+        if emails:
+            response['email_analysis'] = threat_analysis['email_analysis']
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logging.error(f"Error analyzing URL: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 def check_virustotal(url):
     """Check URL against VirusTotal API"""
