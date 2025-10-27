@@ -1,4 +1,5 @@
-const API_URL = 'https://phishing-detector-isnv.onrender.com';
+const API_URL = 'http://localhost:5000';
+const OFFLINE_MODE = false;
 const TEST_MODE = false; // Disabled test mode for real detection
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache for URLs
 const MAX_RETRIES = 3;
@@ -853,7 +854,7 @@ function storeEmailHistory(result) {
     // Add timestamp to result
     const historyItem = {
       ...result,
-      timestamp: Date.now()
+      timestamp: new Date().toISOString()
     };
     
     // Add to beginning of array (most recent first)

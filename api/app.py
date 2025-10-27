@@ -96,6 +96,96 @@ def health():
         "timestamp": datetime.now().isoformat()
     })
 
+@app.route('/feedback', methods=['POST'])
+def feedback():
+    """Receive feedback from users about predictions"""
+    data = request.get_json()
+    if not data or 'url' not in data or 'is_phishing' not in data:
+        return jsonify({'error': 'Invalid feedback data'}), 400
+
+    url = data['url']
+    is_phishing = data['is_phishing']
+
+    # Store feedback for model retraining
+    feedback_entry = {
+        'url': url,
+        'is_phishing': is_phishing,
+        'timestamp': datetime.now().isoformat()
+    }
+
+    try:
+        with open(FEEDBACK_DATA_PATH, 'a') as f:
+            f.write(json.dumps(feedback_entry) + '\n')
+        logging.info(f"Feedback received for {url}: {'phishing' if is_phishing else 'legitimate'}")
+        return jsonify({'message': 'Feedback received successfully'}), 200
+    except Exception as e:
+        logging.error(f"Error saving feedback: {e}")
+        return jsonify({'error': 'Failed to save feedback'}), 500
+
+def retrain_model_from_feedback():
+    """Retrain the model using collected feedback"""
+    if not os.path.exists(FEEDBACK_DATA_PATH):
+        logging.info("No feedback data found, skipping retraining.")
+        return
+
+    try:
+        with open(FEEDBACK_DATA_PATH, 'r') as f:
+            feedback_data = [json.loads(line) for line in f]
+
+        if not feedback_data:
+            logging.info("Feedback data is empty, skipping retraining.")
+            return
+
+        # Prepare data for retraining
+        urls = [item['url'] for item in feedback_data]
+        labels = [1 if item['is_phishing'] else 0 for item in feedback_data]
+
+        # Create features
+        feature_extractor = EnhancedURLFeatureExtractor(None)
+        features = [feature_extractor.extract_all_features(url) for url in urls]
+
+        # Convert to DataFrame
+        df = pd.DataFrame(features)
+        df['label'] = labels
+
+        # Separate features and labels
+        X = df.drop('label', axis=1)
+        y = df['label']
+
+        # Load the existing model
+        online_model = OnlineLearningModel()
+        online_model.load_model(MODEL_PATH)
+
+        # Perform incremental training
+        online_model.incremental_train(X, y)
+
+        # Save the updated model
+        online_model.save_model(MODEL_PATH)
+
+        # Clear feedback data after retraining
+        open(FEEDBACK_DATA_PATH, 'w').close()
+
+        logging.info("Model retrained successfully from feedback.")
+
+    except Exception as e:
+        logging.error(f"Error during model retraining: {e}")
+
+def check_and_retrain_model():
+    """Check if model needs retraining and trigger it"""
+    while True:
+        time.sleep(MODEL_UPDATE_INTERVAL)
+        logging.info("Checking for model update...")
+        retrain_model_from_feedback()
+
+
+# Replace before_first_request with a function that runs after app startup
+def start_background_tasks():
+    executor.submit(check_and_retrain_model)
+
+# Register the function to run after app startup
+with app.app_context():
+    start_background_tasks()
+
 def check_openphish(url):
     """Check if URL is in OpenPhish database"""
     try:
@@ -825,194 +915,45 @@ with app.app_context():
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
-        # Check if model needs to be updated
-        check_for_model_update()
-        
         data = request.get_json()
         url = data.get('url', '')
-        check_external_apis = data.get('check_external_apis', True)
-        
+
         if not url:
             return jsonify({'error': 'URL is required'}), 400
-        
-        # Extract features
-        features = extractor.extract_all_features(url)
-        
-        # Parse URL components
-        parsed = urlparse(url)
-        domain = parsed.netloc
-        
-        # Analyze SSL certificate if HTTPS
-        cert_analysis = None
-        threat_details = []
-        external_api_results = {}
-        
-        if parsed.scheme == 'https':
-            cert_analysis = analyze_ssl_certificate(domain)
+
+        # Use the enhanced feature extractor
+        feature_extractor = EnhancedURLFeatureExtractor()
+        features = feature_extractor.extract_all_features(url)
+
+        # Prepare features for the model
+        # Create a DataFrame from the extracted features
+        features_df = pd.DataFrame([features])
+        features_df['url'] = url 
+
+        # Get prediction
+        # Use the online_model variable that's defined in the file
+        if 'online_model' in globals() and online_model.is_fitted:
+            prediction_proba = online_model.predict_proba(features_df)
+            prediction = online_model.predict(features_df)
             
-            # Add certificate issues to threat details
-            if not cert_analysis['valid']:
-                threat_details.append({
-                    'type': 'certificate_invalid',
-                    'description': 'SSL certificate is invalid or missing',
-                    'severity': 'high'
-                })
-            elif cert_analysis['is_expired']:
-                threat_details.append({
-                    'type': 'certificate_expired',
-                    'description': 'SSL certificate has expired',
-                    'severity': 'high'
-                })
-            elif cert_analysis['is_self_signed']:
-                threat_details.append({
-                    'type': 'certificate_self_signed',
-                    'description': 'SSL certificate is self-signed',
-                    'severity': 'medium'
-                })
-            elif cert_analysis['is_short_lived']:
-                threat_details.append({
-                    'type': 'certificate_short_lived',
-                    'description': 'SSL certificate has unusually short validity period',
-                    'severity': 'medium'
-                })
-        
-        # Check external APIs asynchronously if requested
-        if check_external_apis:
-            # Check VirusTotal
-            vt_result = check_virustotal(url)
-            if vt_result:
-                external_api_results['virustotal'] = vt_result
-                if vt_result.get('is_malicious'):
-                    threat_details.append({
-                        'type': 'virustotal_detection',
-                        'description': f"VirusTotal detected this URL as malicious ({vt_result.get('malicious', 0)} engines)",
-                        'severity': 'high'
-                    })
-            
-            # Check Google Safe Browsing
-            gsb_result = check_google_safebrowsing(url)
-            if gsb_result:
-                external_api_results['google_safebrowsing'] = gsb_result
-                if gsb_result.get('is_malicious'):
-                    threat_details.append({
-                        'type': 'safebrowsing_detection',
-                        'description': f"Google Safe Browsing detected this URL as {gsb_result.get('threat_type', 'malicious')}",
-                        'severity': 'high'
-                    })
-            
-            # Check URLScan.io
-            urlscan_result = check_urlscan(url)
-            if urlscan_result:
-                external_api_results['urlscan'] = urlscan_result
-                if urlscan_result.get('is_malicious'):
-                    categories = ', '.join(urlscan_result.get('categories', ['unknown']))
-                    threat_details.append({
-                        'type': 'urlscan_detection',
-                        'description': f"URLScan.io detected this URL as malicious (categories: {categories})",
-                        'severity': 'high'
-                    })
-        
-        # Simple heuristic scoring (replace with your model later)
-        risk_score = 0.1  # Base low risk
-        
-        # Risk factors with detailed threat information
-        if features['suspicious_keywords']:
-            risk_score += 0.4
-            threat_details.append({
-                'type': 'suspicious_keywords',
-                'description': 'URL contains suspicious keywords often used in phishing',
-                'severity': 'high'
-            })
-            
-        if features['has_ip']:
-            risk_score += 0.3
-            threat_details.append({
-                'type': 'ip_address_url',
-                'description': 'URL uses an IP address instead of a domain name',
-                'severity': 'high'
-            })
-            
-        if not features['has_https']:
-            risk_score += 0.2
-            threat_details.append({
-                'type': 'no_https',
-                'description': 'Website does not use secure HTTPS connection',
-                'severity': 'medium'
-            })
-            
-        if features['url_length'] > 100:
-            risk_score += 0.2
-            threat_details.append({
-                'type': 'excessive_length',
-                'description': 'URL is unusually long which may hide the true destination',
-                'severity': 'medium'
-            })
-            
-        if features['num_hyphens'] > 3:
-            risk_score += 0.1
-            threat_details.append({
-                'type': 'excessive_hyphens',
-                'description': 'Domain contains many hyphens, often used in phishing domains',
-                'severity': 'low'
-            })
-        
-        # Adjust risk score based on external API results
-        if external_api_results:
-            # If any external API detected it as malicious, increase risk
-            if (external_api_results.get('virustotal', {}).get('is_malicious') or
-                external_api_results.get('google_safebrowsing', {}).get('is_malicious') or
-                external_api_results.get('urlscan', {}).get('is_malicious')):
-                risk_score = max(risk_score, 0.8)  # At least HIGH risk
-        
-        risk_score = min(risk_score, 1.0)
-        prediction = 1 if risk_score > 0.5 else 0
-        
-        # Risk level
-        if risk_score > 0.8:
-            risk_level = "VERY_HIGH"
-        elif risk_score > 0.6:
-            risk_level = "HIGH"
-        elif risk_score > 0.4:
-            risk_level = "MODERATE"
-        elif risk_score > 0.2:
-            risk_level = "LOW"
+            response = {
+                'prediction': int(prediction[0]),
+                'prediction_proba': prediction_proba.tolist(),
+                'features': features
+            }
         else:
-            risk_level = "VERY_LOW"
-            
-        # Create detailed response
-        response = {
-            'url': url,
-            'is_phishing': is_phishing,
-            'phishing_probability': phishing_probability,
-            'risk_level': risk_level,
-            'threat_details': threat_details,
-            'certificate_analysis': cert_analysis,
-            'external_api_results': external_api_results
-        }
+            response = {
+                'prediction': -1, # Indicate that the model is not ready
+                'prediction_proba': [0.5, 0.5],
+                'features': features,
+                'message': 'Model is not yet trained. Prediction is based on default values.'
+            }
 
-        # Store feedback data for continuous learning
-        feedback_item = {
-            'url': url,
-            'timestamp': datetime.now().isoformat(),
-            'is_phishing_predicted': is_phishing,
-            'phishing_probability': phishing_probability,
-            'is_phishing': None  # To be filled by user feedback
-        }
-        with open(FEEDBACK_DATA_PATH, 'a+') as f:
-            f.seek(0) # Go to the beginning of the file
-            try:
-                feedback_data = json.load(f)
-            except json.JSONDecodeError:
-                feedback_data = []
-            feedback_data.append(feedback_item)
-            f.seek(0) # Go to the beginning of the file again to overwrite
-            json.dump(feedback_data, f, indent=4)
-
-        return jsonify(response_data)
+        return jsonify(response)
 
     except Exception as e:
-        print(f"Error in predict endpoint: {e}")
-        return jsonify({'error': str(e)}), 500
+        logging.error(f"Error during prediction: {e}")
+        return jsonify({'error': 'An error occurred during prediction.'}), 500
 
 @app.route('/check_email', methods=['POST'])
 def check_email():
