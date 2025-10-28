@@ -28,9 +28,11 @@ function updateUI(response) {
   // Add offline mode indicator if needed
   const modeIndicator = document.getElementById('mode-indicator') || createModeIndicator();
   if (isOfflineMode) {
-    modeIndicator.textContent = '🔌 Offline Mode';
+    modeIndicator.textContent = '🔌 Offline Mode - Limited Analysis';
     modeIndicator.style.backgroundColor = '#6c757d';
     modeIndicator.style.display = 'block';
+    // Add tooltip for offline mode
+    modeIndicator.title = 'API server is not available. Using local analysis with limited features.';
   } else {
     modeIndicator.style.display = 'none';
   }

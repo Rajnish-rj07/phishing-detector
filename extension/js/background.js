@@ -1,5 +1,5 @@
-const API_URL = 'http://localhost:5000';
-const OFFLINE_MODE = false;
+const API_URL = 'https://phishing-detector.onrender.com';
+let OFFLINE_MODE = false; // Will be automatically set to true if API is unavailable
 const TEST_MODE = false; // Disabled test mode for real detection
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache for URLs
 const MAX_RETRIES = 3;
@@ -27,13 +27,16 @@ async function checkApiAvailability() {
     if (response.ok) {
       console.log('API is available');
       isApiAvailable = true;
+      OFFLINE_MODE = false;
     } else {
       console.log('API returned error status:', response.status);
       isApiAvailable = false;
+      OFFLINE_MODE = true;
     }
   } catch (error) {
     console.log('API check failed:', error);
     isApiAvailable = false;
+    OFFLINE_MODE = true;
   }
   
   lastHealthCheckTime = now;
