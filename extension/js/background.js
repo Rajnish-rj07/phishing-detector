@@ -57,7 +57,7 @@ setInterval(checkApiAvailability, HEALTH_CHECK_INTERVAL);
 // Removed local URL analysis function as we're using live API only
 
 // Enhanced URL checking function with better error handling
-async function checkUrlWithAPI(url) {
+async function checkUrlWithAPI(url, forceRefresh = false) {
   if (!url) {
     console.error('No URL provided');
     return {
@@ -73,11 +73,15 @@ async function checkUrlWithAPI(url) {
   isApiAvailable = true;
   console.log('Using live API for detection');
   
-  // Check cache first, but skip if FORCE_LIVE_MODE is enabled
+  // Check cache first, but skip if forceRefresh, FORCE_LIVE_MODE, or TEST_MODE is enabled
   const cachedResult = checkCache(url);
-  if (cachedResult && !TEST_MODE && !FORCE_LIVE_MODE) {
+  if (cachedResult && !forceRefresh && !TEST_MODE && !FORCE_LIVE_MODE) {
     console.log('Using cached result for:', url);
     return cachedResult;
+  }
+  
+  if (forceRefresh) {
+    console.log('Force refresh requested, bypassing cache for:', url);
   }
   
   let retries = 0;
@@ -159,7 +163,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({ status: 'processing' });
     
     // Process the URL check with improved error handling
-    checkUrlWithAPI(request.url)
+    // Pass forceRefresh parameter to bypass cache if specified
+    checkUrlWithAPI(request.url, request.forceRefresh)
       .then(result => {
         console.log('URL check result:', result);
         sendResultBack(result, sender);

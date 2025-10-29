@@ -148,6 +148,28 @@ document.addEventListener('DOMContentLoaded', function() {
         externalApisEl.style.display = 'none';
         modelExplanationEl.style.display = 'none';
         detailsBtn.textContent = '🔍 View Details';
+        
+        // Handle model not trained error
+        if (response.message && response.message.includes("Model is not yet trained")) {
+            statusEl.textContent = 'Warning';
+            statusEl.className = 'status-warning';
+            confidenceEl.textContent = 'Model is not yet trained. Using default values.';
+            // Use the confidence values from the response even if model is not trained
+            if (response.confidence_percent) {
+                phishingProbEl.textContent = response.confidence_percent + '%';
+            } else if (response.probabilityPhishing !== undefined) {
+                phishingProbEl.textContent = response.probabilityPhishing + '%';
+            }
+            
+            if (response.riskLevel) {
+                riskLevelEl.textContent = response.riskLevel;
+            } else {
+                riskLevelEl.textContent = 'LOW';
+            }
+            
+            lastCheckedEl.textContent = new Date().toLocaleString();
+            return;
+        }
 
         const isOfflineMode = response.isOfflineAnalysis === true || response.source === 'offline';
         const modeIndicator = document.getElementById('mode-indicator') || createModeIndicator();
@@ -178,13 +200,14 @@ document.addEventListener('DOMContentLoaded', function() {
             statusEl.className = 'status-safe';
         }
 
-        const confidence = response.confidence || 0;
+        const confidence = response.confidence || response.confidence_percent || 0;
         confidenceEl.textContent = `${confidence}% confidence`;
 
         const phishingProb = response.probabilityPhishing || Math.round(confidence);
         phishingProbEl.textContent = `${phishingProb}%`;
 
-        riskLevelEl.textContent = response.riskLevel || 'UNKNOWN';
+        riskLevelEl.textContent = response.riskLevel || 'LOW';
+        lastCheckedEl.textContent = new Date().toLocaleString();
 
         if (response.threatDetails && response.threatDetails.length > 0) {
             threatDetailsContentEl.innerHTML = '';
@@ -491,6 +514,11 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     recheckBtn.addEventListener('click', function() {
+        // Show spinner while checking
+        spinnerEl.style.display = 'block';
+        statusEl.textContent = 'Checking...';
+        statusEl.className = 'status-checking';
+        
         chrome.tabs.query({
             active: true,
             currentWindow: true
@@ -503,7 +531,31 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             const currentUrl = tabs[0].url;
             const tabId = tabs[0].id;
-            checkUrl(currentUrl, tabId);
+            
+            // Force a fresh check by bypassing cache
+            chrome.runtime.sendMessage({
+                action: 'checkUrl',
+                url: currentUrl,
+                tabId: tabId,
+                forceRefresh: true
+            }, function(response) {
+                if (chrome.runtime.lastError) {
+                    console.error('Error sending message:', chrome.runtime.lastError);
+                    updateUI({
+                        error: 'Communication error with background script: ' + chrome.runtime.lastError.message
+                    });
+                    return;
+                }
+                
+                if (!response) {
+                    updateUI({
+                        error: 'No response from background script'
+                    });
+                    return;
+                }
+                
+                updateUI(response);
+            });
         });
     });
 
