@@ -150,22 +150,37 @@ async function checkUrlWithAPI(url) {
 
 // Message handler for URL checks
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'checkURL') {
-    checkUrlWithAPI(request.url)
-      .then(result => {
-        console.log('Check result:', result);
-        sendResponse(result);
-      })
-      .catch(error => {
-        console.error('Error checking URL:', error);
-        sendResponse({
-          error: error.message,
-          isPhishing: false,
-          riskLevel: 'UNKNOWN',
-          confidence: 0
+  if (request.action === 'checkUrl') { // Corrected action name
+    try {
+      checkUrlWithAPI(request.url)
+        .then(result => {
+          console.log('Check result:', result);
+          sendResponse(result);
+        })
+        .catch(error => {
+          console.error('Error checking URL:', error);
+          sendResponse({
+            error: error.message,
+            isPhishing: false,
+            riskLevel: 'UNKNOWN',
+            confidence: 0
+          });
         });
+    } catch (error) {
+      console.error('Immediate error in checkUrlWithAPI:', error);
+      sendResponse({
+        error: 'An unexpected error occurred.',
+        isPhishing: false,
+        riskLevel: 'UNKNOWN',
+        confidence: 0
       });
+    }
     return true; // Keep message channel open
+  } else {
+    // Handle unknown actions
+    console.warn('Unknown action received:', request.action);
+    sendResponse({ error: 'Unknown action' });
+    return false; // No need to keep the port open
   }
 });
 
