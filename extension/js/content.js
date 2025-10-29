@@ -303,8 +303,18 @@ class PhishingWarningManager {
           // Store in local storage that user proceeded for this domain
           const domain = window.location.hostname;
           // Check if chrome.storage is available before using it
-          if (chrome && chrome.storage && chrome.storage.local) {
-            chrome.storage.local.set({[`proceeded_${domain}`]: true});
+          if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+            try {
+              chrome.storage.local.set({[`proceeded_${domain}`]: true}, function() {
+                if (chrome.runtime.lastError) {
+                  console.error('Error setting chrome storage:', chrome.runtime.lastError);
+                  localStorage.setItem(`proceeded_${domain}`, 'true');
+                }
+              });
+            } catch (error) {
+              console.error('Error accessing chrome.storage:', error);
+              localStorage.setItem(`proceeded_${domain}`, 'true');
+            }
           } else {
             console.log('Chrome storage API not available');
             // Use localStorage as fallback

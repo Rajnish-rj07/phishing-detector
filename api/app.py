@@ -186,43 +186,6 @@ def start_background_tasks():
 with app.app_context():
     start_background_tasks()
 
-def check_openphish(url):
-    """Check if URL is in OpenPhish database"""
-    try:
-        # OpenPhish offers a free feed that can be downloaded
-        # For this implementation, we'll use their public feed URL
-        # In a production environment, you would download this regularly
-        response = cached_get('https://openphish.com/feed.txt', timeout=5)
-        if response.status_code == 200:
-            phishing_urls = response.text.splitlines()
-            # Check if the URL or domain is in the list
-            parsed_url = urlparse(url)
-            domain = parsed_url.netloc
-            
-            for phish_url in phishing_urls:
-                if url in phish_url or domain in phish_url:
-                    return {
-                        'is_malicious': True,
-                        'source': 'OpenPhish',
-                        'threat_type': 'phishing'
-                    }
-            
-            return {
-                'is_malicious': False,
-                'source': 'OpenPhish',
-                'message': 'URL not found in database'
-            }
-        else:
-            return {
-                'error': f'OpenPhish API returned status code {response.status_code}',
-                'is_malicious': False
-            }
-    except Exception as e:
-        return {
-            'error': f'Error checking OpenPhish: {str(e)}',
-            'is_malicious': False
-        }
-
 def check_abuseipdb(ip):
     """Check IP reputation with AbuseIPDB"""
     if not API_KEYS['abuseipdb']:

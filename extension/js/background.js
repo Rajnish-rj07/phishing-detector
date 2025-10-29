@@ -1,5 +1,7 @@
-const API_URL = 'https://phishing-detector-api.onrender.com';
-let OFFLINE_MODE = false; // Will be automatically set to true if API is unavailable
+// API Configuration
+const API_URL = 'https://phishing-detector-7-7x1x.onrender.com';
+// Always use online mode for live API detection
+let OFFLINE_MODE = false; // Disabled offline mode to use live API
 const TEST_MODE = false; // Disabled test mode for real detection
 const FORCE_LIVE_MODE = true; // Always use live mode detection
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache for URLs
@@ -52,6 +54,8 @@ checkApiAvailability();
 // Periodic health check with reduced frequency
 setInterval(checkApiAvailability, HEALTH_CHECK_INTERVAL);
 
+// Removed local URL analysis function as we're using live API only
+
 // Enhanced URL checking function with better error handling
 async function checkUrlWithAPI(url) {
   if (!url) {
@@ -64,12 +68,10 @@ async function checkUrlWithAPI(url) {
     };
   }
   
-  // Force online mode if FORCE_LIVE_MODE is enabled
-  if (FORCE_LIVE_MODE) {
-    OFFLINE_MODE = false;
-    isApiAvailable = true;
-    console.log('Forcing live mode detection');
-  }
+  // Always use online mode
+  OFFLINE_MODE = false;
+  isApiAvailable = true;
+  console.log('Using live API for detection');
   
   // Check cache first, but skip if FORCE_LIVE_MODE is enabled
   const cachedResult = checkCache(url);
@@ -150,37 +152,59 @@ async function checkUrlWithAPI(url) {
 
 // Message handler for URL checks
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'checkUrl') { // Corrected action name
-    try {
-      checkUrlWithAPI(request.url)
-        .then(result => {
-          console.log('Check result:', result);
-          sendResponse(result);
-        })
-        .catch(error => {
-          console.error('Error checking URL:', error);
-          sendResponse({
-            error: error.message,
-            isPhishing: false,
-            riskLevel: 'UNKNOWN',
-            confidence: 0
-          });
-        });
-    } catch (error) {
-      console.error('Immediate error in checkUrlWithAPI:', error);
-      sendResponse({
-        error: 'An unexpected error occurred.',
-        isPhishing: false,
-        riskLevel: 'UNKNOWN',
-        confidence: 0
+  if (request.action === 'checkUrl') {
+    console.log('Received checkUrl request for:', request.url);
+    
+    // Immediately respond that we're processing
+    sendResponse({ status: 'processing' });
+    
+    // Process the URL check with improved error handling
+    checkUrlWithAPI(request.url)
+      .then(result => {
+        console.log('URL check result:', result);
+        sendResultBack(result, sender);
+      })
+      .catch(error => {
+        console.error('Error checking URL:', error);
+        
+        // Return error result
+        const errorResult = {
+          error: error.message || 'Error connecting to API server',
+          isPhishing: false,
+          riskLevel: 'UNKNOWN',
+          confidence: 0
+        };
+        sendResultBack(errorResult, sender);
       });
-    }
-    return true; // Keep message channel open
+    
+    // Must return true to indicate async response
+    return true;
   } else {
     // Handle unknown actions
     console.warn('Unknown action received:', request.action);
     sendResponse({ error: 'Unknown action' });
     return false; // No need to keep the port open
+  }
+  
+  // Helper function to send results back to the appropriate sender
+  function sendResultBack(result, sender) {
+    try {
+      if (sender.tab) {
+        // If from content script, send to that tab
+        chrome.tabs.sendMessage(sender.tab.id, {
+          action: 'urlCheckResult',
+          result: result
+        });
+      } else {
+        // If from popup, broadcast to all
+        chrome.runtime.sendMessage({
+          action: 'urlCheckResult',
+          result: result
+        });
+      }
+    } catch (err) {
+      console.error('Error sending result back:', err);
+    }
   }
 });
 

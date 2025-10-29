@@ -412,6 +412,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function checkUrl(url, tabId) {
         spinnerEl.style.display = 'block';
+        statusEl.textContent = 'Checking...';
+        confidenceEl.textContent = 'Analyzing...';
 
         if (url.startsWith('chrome://') ||
             url.startsWith('chrome-extension://') ||
@@ -430,15 +432,29 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
+        // Set a timeout to show an error message if the API doesn't respond
+        const timeoutId = setTimeout(() => {
+            console.log("API request timed out");
+            updateUI({
+                error: "API request timed out. Please try again.",
+                isPhishing: false,
+                confidence: 0,
+                riskLevel: 'UNKNOWN',
+                source: 'error'
+            });
+        }, 15000); // 15 second timeout for API response
+
         chrome.runtime.sendMessage({
             action: 'checkUrl',
             url: url,
             tabId: tabId
         }, function(response) {
+            clearTimeout(timeoutId); // Clear the timeout if we got a response
+            
             if (chrome.runtime.lastError) {
                 console.error('Error sending message:', chrome.runtime.lastError);
                 updateUI({
-                    error: 'Communication error with background script'
+                    error: 'Communication error with background script: ' + chrome.runtime.lastError.message
                 });
                 return;
             }
@@ -471,6 +487,14 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    // Add event listener for More Info button
+    moreInfoBtn.addEventListener('click', function() {
+        // Open a new tab with more information about phishing
+        chrome.tabs.create({
+            url: 'https://www.phishing.org/what-is-phishing'
+        });
+    });
+
     detailsBtn.addEventListener('click', function() {
         const sections = [threatDetailsEl, certAnalysisEl, externalApisEl, modelExplanationEl];
         const isVisible = sections.some(el => el.style.display === 'block');
@@ -480,7 +504,7 @@ document.addEventListener('DOMContentLoaded', function() {
             this.textContent = '🔍 View Details';
         } else {
             sections.forEach(el => {
-                if (el.innerHTML.trim() !== '') {
+                if (el.querySelector('.explanation-content, div') || (el.innerHTML && el.innerHTML.trim() !== '')) {
                     el.style.display = 'block';
                 }
             });
