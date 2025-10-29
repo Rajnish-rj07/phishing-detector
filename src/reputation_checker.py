@@ -12,13 +12,19 @@ class ReputationChecker:
             'virustotal': os.getenv('VIRUSTOTAL_API_KEY'),
             'google_safebrowsing': os.getenv('GOOGLE_SAFEBROWSING_KEY'),
             'urlscan': os.getenv('URLSCAN_API_KEY'),
-            'openphish': os.getenv('OPENPHISH_API_KEY'),
             'abuseipdb': os.getenv('ABUSEIPDB_API_KEY'),
-            'emailrep': os.getenv('EMAILREP_API_KEY'),
-            'threatminer': os.getenv('THREATMINER_API_KEY')
+            'emailrep': os.getenv('EMAILREP_API_KEY')
         }
         self.cache = {}
         self.cache_expiry = 3600  # 1 hour cache
+        # Define reliability weights for each API service
+        self.api_weights = {
+            'virustotal': 0.35,
+            'google_safebrowsing': 0.30,
+            'urlscan': 0.20,
+            'abuseipdb': 0.10,
+            'emailrep': 0.05
+        }
 
     def check_virustotal(self, url):
         """Check URL with VirusTotal API"""
@@ -80,16 +86,6 @@ class ReputationChecker:
         except Exception as e:
             return {'error': str(e)}
 
-    def check_openphish(self, url):
-        """Check URL with OpenPhish API"""
-        try:
-            response = requests.get(f'https://openphish.com/feed.txt')
-            if response.status_code == 200:
-                return {'is_phishing': url in response.text}
-            return {'error': f'OpenPhish API error: {response.status_code}'}
-        except Exception as e:
-            return {'error': str(e)}
-
     def check_abuseipdb(self, ip_address):
         """Check IP address with AbuseIPDB API"""
         api_key = self.api_keys.get('abuseipdb')
@@ -125,33 +121,75 @@ class ReputationChecker:
         except Exception as e:
             return {'error': str(e)}
 
-    def check_threatminer(self, domain):
-        """Check domain with ThreatMiner API"""
-        try:
-            response = requests.get(f'https://api.threatminer.org/v2/domain.php?q={domain}&rt=1')
-            if response.status_code == 200:
-                return response.json()
-            return {'error': f'ThreatMiner API error: {response.status_code}'}
-        except Exception as e:
-            return {'error': str(e)}
-
     def check_all_reputations(self, url):
-        """Check URL reputation from all available sources"""
+        """Check URL reputation from all available sources using weighted ensemble approach"""
         reputation_results = {}
+        weighted_scores = []
+        total_weight = 0
 
         # Get IP address for AbuseIPDB check
         try:
             parsed_url = urlparse(url)
             ip_address = socket.gethostbyname(parsed_url.hostname)
             reputation_results['abuseipdb'] = self.check_abuseipdb(ip_address)
+            # Process AbuseIPDB result to get a normalized score (0-1)
+            if 'data' in reputation_results['abuseipdb'] and 'abuseConfidenceScore' in reputation_results['abuseipdb']['data']:
+                score = min(reputation_results['abuseipdb']['data']['abuseConfidenceScore'] / 100, 1.0)
+                weight = self.api_weights.get('abuseipdb', 0.1)
+                weighted_scores.append((score, weight))
+                total_weight += weight
         except Exception as e:
             reputation_results['abuseipdb'] = {'error': str(e)}
 
+        # Check VirusTotal
         reputation_results['virustotal'] = self.check_virustotal(url)
+        try:
+            if 'data' in reputation_results['virustotal'] and 'attributes' in reputation_results['virustotal']['data']:
+                stats = reputation_results['virustotal']['data']['attributes']['last_analysis_stats']
+                if stats:
+                    malicious = stats.get('malicious', 0)
+                    suspicious = stats.get('suspicious', 0)
+                    total = sum(stats.values())
+                    if total > 0:
+                        score = (malicious + suspicious * 0.5) / total
+                        weight = self.api_weights.get('virustotal', 0.35)
+                        weighted_scores.append((score, weight))
+                        total_weight += weight
+        except Exception:
+            pass
+
+        # Check Google Safe Browsing
         reputation_results['google_safebrowsing'] = self.check_google_safe_browsing(url)
+        if isinstance(reputation_results['google_safebrowsing'], (int, float)):
+            score = float(reputation_results['google_safebrowsing'])
+            weight = self.api_weights.get('google_safebrowsing', 0.30)
+            weighted_scores.append((score, weight))
+            total_weight += weight
+        elif isinstance(reputation_results['google_safebrowsing'], dict) and 'matches' in reputation_results['google_safebrowsing']:
+            score = 1.0 if reputation_results['google_safebrowsing']['matches'] else 0.0
+            weight = self.api_weights.get('google_safebrowsing', 0.30)
+            weighted_scores.append((score, weight))
+            total_weight += weight
+
+        # Check URLScan
         reputation_results['urlscan'] = self.check_urlscan(url)
-        reputation_results['openphish'] = self.check_openphish(url)
-        reputation_results['threatminer'] = self.check_threatminer(urlparse(url).hostname)
+        try:
+            if 'verdicts' in reputation_results['urlscan'] and 'overall' in reputation_results['urlscan']['verdicts']:
+                score = 1.0 if reputation_results['urlscan']['verdicts']['overall']['malicious'] else 0.0
+                weight = self.api_weights.get('urlscan', 0.20)
+                weighted_scores.append((score, weight))
+                total_weight += weight
+        except Exception:
+            pass
+
+        # Calculate ensemble score using weighted average
+        if weighted_scores and total_weight > 0:
+            ensemble_score = sum(score * weight for score, weight in weighted_scores) / total_weight
+            reputation_results['ensemble_score'] = ensemble_score
+            reputation_results['confidence'] = min(0.5 + (len(weighted_scores) / len(self.api_weights)) * 0.5, 1.0)
+        else:
+            reputation_results['ensemble_score'] = 0.5  # Neutral score if no data
+            reputation_results['confidence'] = 0.3  # Low confidence
 
         return reputation_results
 
@@ -163,39 +201,155 @@ class ReputationChecker:
         return random.uniform(0, 0.3)  # Most URLs are safe
     
     def check_url_reputation(self, url):
-        """Check URL reputation from multiple sources"""
+        """Check URL reputation using Bayesian approach and ensemble learning"""
+        import hashlib
+        import time
+        import math
+        
         url_hash = hashlib.md5(url.encode()).hexdigest()
         
         # Check cache first
         if url_hash in self.cache:
-            cached_time, score = self.cache[url_hash]
+            cached_time, result = self.cache[url_hash]
             if time.time() - cached_time < self.cache_expiry:
-                return score
+                return result
         
-        # Calculate reputation score (0 = safe, 1 = dangerous)
-        reputation_score = 0.0
+        # Initialize with prior probability (base rate of phishing)
+        # Typical phishing base rate is around 1% of all URLs
+        prior_phishing_probability = 0.01
+        
+        # Feature collection and importance analysis
+        features = {}
+        feature_importance = {}
         
         try:
-            # Factor 1: Domain age (newer domains more suspicious)
+            # Feature 1: Domain age (newer domains more suspicious)
             domain_age_score = self.check_domain_age(url)
-            reputation_score += domain_age_score * 0.3
+            features['domain_age'] = domain_age_score
+            feature_importance['domain_age'] = 0.15
             
-            # Factor 2: SSL certificate
+            # Feature 2: SSL certificate
             ssl_score = self.check_ssl_certificate(url)
-            reputation_score += ssl_score * 0.2
+            features['ssl_certificate'] = ssl_score
+            feature_importance['ssl_certificate'] = 0.10
             
-            # Factor 3: External reputation (placeholder)
-            external_score = self.check_google_safe_browsing(url)
-            reputation_score += external_score * 0.5
+            # Feature 3: External reputation APIs
+            reputation_results = self.check_all_reputations(url)
+            if 'ensemble_score' in reputation_results:
+                features['api_reputation'] = reputation_results['ensemble_score']
+                feature_importance['api_reputation'] = 0.50
+                
+                # Confidence in the API results
+                confidence = reputation_results.get('confidence', 0.5)
+            else:
+                features['api_reputation'] = 0.5  # Neutral if no API data
+                feature_importance['api_reputation'] = 0.25
+                confidence = 0.3  # Low confidence
+            
+            # Feature 4: URL characteristics (length, special chars, etc.)
+            url_chars_score = self.analyze_url_characteristics(url)
+            features['url_characteristics'] = url_chars_score
+            feature_importance['url_characteristics'] = 0.25
+            
+            # Bayesian update of probability
+            likelihood_ratio = 1.0
+            for feature, value in features.items():
+                # Convert feature score to likelihood ratio
+                # Higher feature value = more likely to be phishing
+                feature_weight = feature_importance.get(feature, 0.1)
+                if value > 0.5:  # Feature suggests phishing
+                    # Adjust likelihood based on feature value and importance
+                    lr = 1.0 + (value - 0.5) * 2 * feature_weight * 10
+                else:  # Feature suggests legitimate
+                    # Inverse relationship for legitimate indicators
+                    lr = 1.0 / (1.0 + (0.5 - value) * 2 * feature_weight * 10)
+                
+                likelihood_ratio *= lr
+            
+            # Apply Bayes' theorem
+            posterior_probability = (prior_phishing_probability * likelihood_ratio) / \
+                ((prior_phishing_probability * likelihood_ratio) + 
+                 (1 - prior_phishing_probability))
+            
+            # Calculate confidence interval (simplified)
+            margin_of_error = 0.5 * (1 - confidence)
+            
+            # Prepare result with feature importance
+            result = {
+                'probability_phishing': posterior_probability,
+                'confidence': confidence,
+                'margin_of_error': margin_of_error,
+                'confidence_interval': [
+                    max(0, posterior_probability - margin_of_error),
+                    min(1, posterior_probability + margin_of_error)
+                ],
+                'features': features,
+                'feature_importance': feature_importance
+            }
             
             # Cache result
-            self.cache[url_hash] = (time.time(), reputation_score)
+            self.cache[url_hash] = (time.time(), result)
             
-            return min(reputation_score, 1.0)
+            return result
             
         except Exception as e:
             print(f"Error checking reputation for {url}: {e}")
-            return 0.5  # Unknown/moderate risk
+            return {
+                'probability_phishing': 0.5,  # Unknown/moderate risk
+                'confidence': 0.2,  # Very low confidence
+                'error': str(e)
+            }
+            
+    def analyze_url_characteristics(self, url):
+        """Analyze URL characteristics for suspicious patterns"""
+        score = 0.0
+        count = 0
+        
+        # Check URL length (longer URLs more suspicious)
+        if len(url) > 100:
+            score += 0.8
+            count += 1
+        elif len(url) > 75:
+            score += 0.5
+            count += 1
+        elif len(url) > 50:
+            score += 0.3
+            count += 1
+        else:
+            score += 0.1
+            count += 1
+            
+        # Check for suspicious characters
+        suspicious_chars = ['@', ',', '%', '+', '\\', '&', '=', '$', '#']
+        char_count = sum(1 for c in url if c in suspicious_chars)
+        if char_count > 5:
+            score += 0.9
+            count += 1
+        elif char_count > 3:
+            score += 0.6
+            count += 1
+        elif char_count > 0:
+            score += 0.3
+            count += 1
+        else:
+            score += 0.1
+            count += 1
+            
+        # Check for IP address instead of domain
+        import re
+        if re.search(r'\d+\.\d+\.\d+\.\d+', url):
+            score += 0.9
+            count += 1
+            
+        # Check for multiple subdomains
+        parsed_url = urlparse(url)
+        domain_parts = parsed_url.netloc.split('.')
+        if len(domain_parts) > 3:
+            score += 0.7
+            count += 1
+            
+        # Return average score
+        return score / count if count > 0 else 0.5
     
     def check_domain_age(self, url):
         """Check domain registration age"""

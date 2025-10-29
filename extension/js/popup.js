@@ -85,9 +85,15 @@ function updateUI(response) {
     document.getElementById('status').className = 'status-safe';
   }
     
-  document.getElementById('confidence').textContent = `${response.confidence}% confidence`;
-  document.getElementById('phishing-prob').textContent = `${response.probabilityPhishing}%`;
-  document.getElementById('risk-level').textContent = response.riskLevel;
+  // Ensure confidence is a number and not undefined
+  const confidence = response.confidence || 0;
+  document.getElementById('confidence').textContent = `${confidence}% confidence`;
+  
+  // Ensure probability is a number and not undefined
+  const phishingProb = response.probabilityPhishing || Math.round(confidence);
+  document.getElementById('phishing-prob').textContent = `${phishingProb}%`;
+  
+  document.getElementById('risk-level').textContent = response.riskLevel || 'UNKNOWN';
     
   // Update threat details if available
   if (response.threatDetails && response.threatDetails.length > 0) {
@@ -123,6 +129,8 @@ function updateUI(response) {
     let securityLevel = cert.security_level || 'MEDIUM';
     let securityScore = cert.security_score || 0;
     let securityColor = '#28a745';
+    
+    console.log('Certificate data:', cert); // Debug log
       
     if (!cert.valid || cert.is_expired || cert.is_self_signed) {
       certStatus = 'Invalid';
@@ -131,6 +139,9 @@ function updateUI(response) {
       certStatus = 'Suspicious';
       certColor = '#ffc107';
     }
+    
+    // Always show certificate section even with minimal data
+    document.getElementById('cert-analysis').style.display = 'block';
     
     // Set security level color
     if (securityLevel === 'LOW' || securityScore < 50) {
@@ -195,6 +206,8 @@ function updateUI(response) {
     const apis = response.externalApiResults;
     const apisContent = document.getElementById('external-apis-content');
     apisContent.innerHTML = '';
+    
+    console.log('External API results:', apis); // Debug log
       
     // VirusTotal
     if (apis.virustotal) {
@@ -207,6 +220,9 @@ function updateUI(response) {
       `;
       apisContent.appendChild(vtElement);
     }
+    
+    // Always show external APIs section even with minimal data
+    document.getElementById('external-apis').style.display = 'block';
     
     // PhishTank
     if (apis.phishtank) {

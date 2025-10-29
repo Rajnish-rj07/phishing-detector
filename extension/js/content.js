@@ -293,7 +293,14 @@ class PhishingWarningManager {
         proceedBtn.addEventListener('click', () => {
           // Store in local storage that user proceeded for this domain
           const domain = window.location.hostname;
-          chrome.storage.local.set({[`proceeded_${domain}`]: true});
+          // Check if chrome.storage is available before using it
+          if (chrome && chrome.storage && chrome.storage.local) {
+            chrome.storage.local.set({[`proceeded_${domain}`]: true});
+          } else {
+            console.log('Chrome storage API not available');
+            // Use localStorage as fallback
+            localStorage.setItem(`proceeded_${domain}`, 'true');
+          }
           this.removeWarning();
         });
       }

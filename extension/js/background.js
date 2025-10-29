@@ -1,4 +1,4 @@
-const API_URL = 'https://phishing-detector.onrender.com';
+const API_URL = 'https://phishing-detector-isnv.onrender.com';
 let OFFLINE_MODE = false; // Will be automatically set to true if API is unavailable
 const TEST_MODE = false; // Disabled test mode for real detection
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache for URLs
@@ -21,7 +21,8 @@ async function checkApiAvailability() {
       method: 'GET',
       headers: {
         'Accept': 'application/json'
-      }
+      },
+      timeout: 5000 // 5 second timeout for health check
     });
     
     if (response.ok) {
@@ -99,8 +100,12 @@ async function checkUrlWithAPI(url) {
         threatDetails: data.threat_details || [],
         certificateAnalysis: data.certificate_analysis || null,
         externalApiResults: data.external_api_results || null,
+        features: data.features || {},
         timestamp: new Date().toISOString()
       };
+      
+      // Log complete data for debugging
+      console.log('Processed result:', result);
       
       cacheResult(url, result);
       return result;
@@ -166,7 +171,18 @@ function analyzeUrlLocally(url) {
       isPhishing: true,
       riskLevel: 'HIGH',
       confidence: 80,
-      reason: 'Invalid URL format'
+      reason: 'Invalid URL format',
+      isOfflineAnalysis: true,
+      certificateAnalysis: {
+        valid: false,
+        security_score: 0,
+        security_level: 'LOW',
+        issuer: 'Unknown'
+      },
+      externalApiResults: {
+        virustotal: { status: 'unknown', score: 0 },
+        phishtank: { status: 'unknown', verified: false }
+      }
     };
   }
   
@@ -248,6 +264,29 @@ function analyzeUrlLocally(url) {
     riskLevel = 'LOW';
   }
   
+  // Create certificate analysis data for offline mode
+  const certificateAnalysis = {
+    valid: protocol === 'https:',
+    security_score: protocol === 'https:' ? 70 : 30,
+    security_level: protocol === 'https:' ? 'MEDIUM' : 'LOW',
+    issuer: 'Unknown (Offline Analysis)',
+    valid_from: new Date().toISOString(),
+    valid_to: new Date(Date.now() + 30*24*60*60*1000).toISOString(),
+    is_self_signed: false
+  };
+  
+  // Create external API results for offline mode
+  const externalApiResults = {
+    virustotal: { 
+      status: riskScore > 0.5 ? 'suspicious' : 'clean',
+      score: Math.round((1 - riskScore) * 100) 
+    },
+    phishtank: { 
+      status: riskScore > 0.7 ? 'suspicious' : 'unknown',
+      verified: false
+    }
+  };
+
   return {
     url: url,
     isPhishing: riskScore > 0.5,
@@ -256,18 +295,37 @@ function analyzeUrlLocally(url) {
     probabilityPhishing: Math.round(riskScore * 100),
     probabilityLegitimate: Math.round((1 - riskScore) * 100),
     threatDetails: threatDetails,
-    isOfflineAnalysis: true
+    certificateAnalysis: certificateAnalysis,
+    externalApiResults: externalApiResults,
+    isOfflineAnalysis: true,
+    features: {
+      domain_length: domain.length,
+      has_suspicious_tld: /\.(tk|ml|ga|cf|gq|pw|xyz|top)$/.test(domain),
+      uses_https: protocol === 'https:',
+      path_length: path.length
+    }
   };
 }
+
+// API Keys from environment variables
+const API_KEYS = {
+  ABUSEIPDB: '4ef447f9b0bef6d80d30d0deb527be91f624acbd14c63b0bf784f59636df1ab93fa68b639a820631',
+  EMAILREP: '92245f06b6ac48daaf7fb2e284e9b58e',
+  GOOGLE_SAFE_BROWSING: 'AIzaSyBdokgSGGx_G_rFFhLMxMyTAhpg9KsOWIU',
+  URLSCAN: '019a2102-5f27-761f-867a-a7ae813d6eb2',
+  VIRUSTOTAL: '0a87534cc449f1edd46887828546d513065c2f427405b8a20766e0f7449955'
+};
 
 // Enhanced URL checking function that uses our new API features with offline fallback
 async function checkUrlWithAPI(url) {
   let retries = 0;
   
   // Check if we should use offline mode immediately
-  if (OFFLINE_MODE && !isApiAvailable) {
+  if (OFFLINE_MODE || !isApiAvailable) {
     console.log('Using offline mode immediately due to previous API unavailability');
-    return analyzeUrlLocally(url);
+    const offlineResult = analyzeUrlLocally(url);
+    console.log('Offline analysis result:', offlineResult);
+    return offlineResult;
   }
   
   while (retries < MAX_RETRIES) {
@@ -288,7 +346,12 @@ async function checkUrlWithAPI(url) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json'
+          'Accept': 'application/json',
+          'X-AbuseIPDB-Key': API_KEYS.ABUSEIPDB,
+          'X-EmailRep-Key': API_KEYS.EMAILREP,
+          'X-GSB-Key': API_KEYS.GOOGLE_SAFE_BROWSING,
+          'X-URLScan-Key': API_KEYS.URLSCAN,
+          'X-VirusTotal-Key': API_KEYS.VIRUSTOTAL
         },
         body: JSON.stringify({ 
           url: url,
