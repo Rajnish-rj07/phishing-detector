@@ -166,13 +166,22 @@ class PhishingWarningManager {
   sendMessageToBackground(action, data) {
     return new Promise((resolve, reject) => {
       try {
+        // Add timeout to prevent hanging promises
+        const timeoutId = setTimeout(() => {
+          console.warn(`Message timeout (${action}): No response received`);
+          resolve({}); // Resolve with empty object after timeout
+        }, 5000); // 5 second timeout
+        
         chrome.runtime.sendMessage({ action, ...data }, (response) => {
           if (chrome.runtime.lastError) {
             console.warn(`Message error (${action}):`, chrome.runtime.lastError.message);
+            clearTimeout(timeoutId); // Clear timeout when error received
             resolve({}); // Return empty object instead of rejecting
-          } else {
-            resolve(response || {});
+            return; // Important: return early to prevent further execution
           }
+          
+          clearTimeout(timeoutId); // Clear timeout when response received
+          resolve(response || {});
         });
       } catch (error) {
         console.warn(`Failed to send message (${action}):`, error);

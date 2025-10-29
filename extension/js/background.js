@@ -1,6 +1,7 @@
 const API_URL = 'https://phishing-detector-api.onrender.com';
 let OFFLINE_MODE = false; // Will be automatically set to true if API is unavailable
 const TEST_MODE = false; // Disabled test mode for real detection
+const FORCE_LIVE_MODE = true; // Always use live mode detection
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache for URLs
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000; // 2 seconds delay between retries
@@ -31,13 +32,15 @@ async function checkApiAvailability() {
       OFFLINE_MODE = false;
     } else {
       console.log('API returned error status:', response.status);
-      isApiAvailable = false;
-      OFFLINE_MODE = true;
+      // If FORCE_LIVE_MODE is true, keep online mode even if API check fails
+      isApiAvailable = FORCE_LIVE_MODE ? true : false;
+      OFFLINE_MODE = FORCE_LIVE_MODE ? false : true;
     }
   } catch (error) {
     console.log('API check failed:', error);
-    isApiAvailable = false;
-    OFFLINE_MODE = true;
+    // If FORCE_LIVE_MODE is true, keep online mode even if API check fails
+    isApiAvailable = FORCE_LIVE_MODE ? true : false;
+    OFFLINE_MODE = FORCE_LIVE_MODE ? false : true;
   }
   
   lastHealthCheckTime = now;
@@ -61,9 +64,16 @@ async function checkUrlWithAPI(url) {
     };
   }
   
-  // Check cache first
+  // Force online mode if FORCE_LIVE_MODE is enabled
+  if (FORCE_LIVE_MODE) {
+    OFFLINE_MODE = false;
+    isApiAvailable = true;
+    console.log('Forcing live mode detection');
+  }
+  
+  // Check cache first, but skip if FORCE_LIVE_MODE is enabled
   const cachedResult = checkCache(url);
-  if (cachedResult && !TEST_MODE) {
+  if (cachedResult && !TEST_MODE && !FORCE_LIVE_MODE) {
     console.log('Using cached result for:', url);
     return cachedResult;
   }

@@ -14,6 +14,7 @@ function getSeverityColor(severity) {
 
 // Function to update the UI with response data
 function updateUI(response) {
+  console.log("Updating UI with response:", response);
   // Reset advanced sections
   document.getElementById('threat-details').style.display = 'none';
   document.getElementById('cert-analysis').style.display = 'none';
@@ -23,7 +24,7 @@ function updateUI(response) {
   document.getElementById('loading-spinner').style.display = 'none'; // Hide spinner when UI updates
   
   // Check if this is an offline analysis
-  const isOfflineMode = response.isOfflineAnalysis === true;
+  const isOfflineMode = response.isOfflineAnalysis === true || response.source === 'offline';
   
   // Add offline mode indicator if needed
   const modeIndicator = document.getElementById('mode-indicator') || createModeIndicator();
@@ -115,6 +116,75 @@ function updateUI(response) {
       threatDetailsContent.appendChild(threatElement);
     });
     document.getElementById('threat-details').style.display = 'block'; // Show section if content exists
+  } else if (response.api_results && response.api_results.reputation_results) {
+    // Extract threat details from reputation_results if available
+    const threatDetailsContent = document.getElementById('threat-details-content');
+    threatDetailsContent.innerHTML = '';
+    const repResults = response.api_results.reputation_results;
+    const threats = [];
+    
+    // Create threat items from reputation results
+    if (repResults.virustotal && repResults.virustotal.malicious > 0) {
+      threats.push({
+        type: 'VirusTotal',
+        description: `Flagged by ${repResults.virustotal.malicious} security vendors as malicious.`,
+        severity: 'HIGH'
+      });
+    }
+    
+    if (repResults.google_safe_browsing && repResults.google_safe_browsing.matches) {
+      threats.push({
+        type: 'Google Safe Browsing',
+        description: 'This URL has been flagged as unsafe by Google Safe Browsing.',
+        severity: 'HIGH'
+      });
+    }
+    
+    if (repResults.urlscan && repResults.urlscan.malicious) {
+      threats.push({
+        type: 'URLScan.io',
+        description: 'This URL has been identified as potentially malicious by URLScan.io.',
+        severity: 'MEDIUM'
+      });
+    }
+    
+    if (repResults.abuseipdb && repResults.abuseipdb.abuseConfidenceScore > 50) {
+      threats.push({
+        type: 'AbuseIPDB',
+        description: `The IP address has an abuse confidence score of ${repResults.abuseipdb.abuseConfidenceScore}%.`,
+        severity: repResults.abuseipdb.abuseConfidenceScore > 80 ? 'HIGH' : 'MEDIUM'
+      });
+    }
+    
+    // Add generic threat if phishing probability is high but no specific threats found
+    if (threats.length === 0 && response.probabilityPhishing > 70) {
+      threats.push({
+        type: 'ML Detection',
+        description: 'Our machine learning model detected suspicious patterns in this URL.',
+        severity: response.probabilityPhishing > 90 ? 'HIGH' : 'MEDIUM'
+      });
+    }
+    
+    // Add threats to the display
+    if (threats.length > 0) {
+      threats.forEach(threat => {
+        const threatElement = document.createElement('div');
+        threatElement.style.marginBottom = '8px';
+        threatElement.style.padding = '4px';
+        threatElement.style.borderLeft = '3px solid ' + getSeverityColor(threat.severity);
+        threatElement.style.paddingLeft = '8px';
+          
+        threatElement.innerHTML = `
+          <strong>${threat.type}</strong>: ${threat.description}
+          <span style="display: inline-block; margin-left: 5px; padding: 2px 5px; border-radius: 3px; font-size: 10px; background: ${getSeverityColor(threat.severity)}; color: white;">${threat.severity}</span>
+        `;
+          
+        threatDetailsContent.appendChild(threatElement);
+      });
+      document.getElementById('threat-details').style.display = 'block';
+    } else {
+      document.getElementById('threat-details').style.display = 'none';
+    }
   } else {
     document.getElementById('threat-details').style.display = 'none'; // Hide section if no content
   }
@@ -312,221 +382,187 @@ function updateUI(response) {
       explanationContent.appendChild(explanationElement);
     });
     document.getElementById('model-explanation').style.display = 'block'; // Show section if content exists
+  } else if (response.features || (response.api_results && response.api_results.features)) {
+    // Use features from response or api_results if modelExplanation is not available
+    const features = response.features || (response.api_results ? response.api_results.features : null) || {};
+    const explanationContent = document.getElementById('model-explanation-content');
+    explanationContent.innerHTML = generateFeatureExplanation(features);
+    document.getElementById('model-explanation').style.display = 'block';
   } else {
     document.getElementById('model-explanation').style.display = 'none'; // Hide section if no content
   }
   
-  document.getElementById('last-checked').textContent = 'Just now';
+  // Generate explanation from features when model explanation is not available
+  function generateFeatureExplanation(features) {
+    if (!features || typeof features !== 'object') {
+      return '<p>No feature information available.</p>';
+    }
+    
+    let html = '<div class="explanation-content">';
+    html += '<p class="explanation-summary">Analysis based on URL characteristics:</p>';
+    html += '<h4>Key Factors:</h4><ul class="feature-list">';
+    
+    // Convert features object to array of {name, value, importance} objects
+    const featureArray = [];
+    
+    // Add URL length
+    if (features.url_length !== undefined) {
+      featureArray.push({
+        name: 'URL Length',
+        value: features.url_length,
+        importance: features.url_length > 75 ? 0.8 : features.url_length > 50 ? 0.5 : 0.2
+      });
+    }
+    
+    // Add suspicious TLD
+    if (features.suspicious_tld !== undefined) {
+      featureArray.push({
+        name: 'Suspicious TLD',
+        value: features.suspicious_tld ? 'Yes' : 'No',
+        importance: features.suspicious_tld ? 0.9 : 0.1
+      });
+    }
+    
+    // Add number of dots
+    if (features.num_dots !== undefined) {
+      featureArray.push({
+        name: 'Number of Dots',
+        value: features.num_dots,
+        importance: features.num_dots > 3 ? 0.7 : 0.3
+      });
+    }
+    
+    // Add has IP
+    if (features.has_ip !== undefined) {
+      featureArray.push({
+        name: 'Contains IP Address',
+        value: features.has_ip ? 'Yes' : 'No',
+        importance: features.has_ip ? 0.9 : 0.1
+      });
+    }
+    
+    // Add has HTTPS
+    if (features.has_https !== undefined) {
+      featureArray.push({
+        name: 'Uses HTTPS',
+        value: features.has_https ? 'Yes' : 'No',
+        importance: features.has_https ? 0.2 : 0.8
+      });
+    }
+    
+    // Add suspicious words
+    if (features.suspicious_words !== undefined) {
+      featureArray.push({
+        name: 'Suspicious Words',
+        value: features.suspicious_words ? 'Yes' : 'No',
+        importance: features.suspicious_words ? 0.85 : 0.15
+      });
+    }
+    
+    // Add domain age if available
+    if (features.domain_age !== undefined) {
+      const age = features.domain_age;
+      featureArray.push({
+        name: 'Domain Age',
+        value: age < 30 ? 'New (< 30 days)' : age < 180 ? 'Recent (< 6 months)' : 'Established',
+        importance: age < 30 ? 0.9 : age < 180 ? 0.6 : 0.2
+      });
+    }
+    
+    // Sort by importance (descending)
+    featureArray.sort((a, b) => b.importance - a.importance);
+    
+    // Add top 5 features to HTML
+    featureArray.slice(0, 5).forEach(feature => {
+      const importanceClass = feature.importance > 0.7 ? 'high' : feature.importance > 0.4 ? 'medium' : 'low';
+      html += `<li class="feature-item ${importanceClass}">
+        <span class="feature-name">${feature.name}</span>: 
+        <span class="feature-value">${feature.value}</span>
+        <div class="importance-bar" style="width: ${feature.importance * 100}%; background-color: ${
+          feature.importance > 0.7 ? '#dc3545' : feature.importance > 0.4 ? '#ffc107' : '#28a745'
+        };"></div>
+      </li>`;
+    });
+    
+    html += '</ul></div>';
+    return html;
+  }
 }
 
-// Wait for DOM to load
-document.addEventListener('DOMContentLoaded', function() {
-  try {
-    // Get current tab URL and check it
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      if (!tabs || tabs.length === 0) {
-        console.error('No active tab found');
-        updateUI({error: 'No active tab found'});
-        return;
-      }
-      
-      const currentUrl = tabs[0].url;
-      
-      // Display current URL
-      document.getElementById('current-url').textContent = currentUrl;
-      
-      // Show loading state and spinner
-      document.getElementById('status').textContent = 'Checking...';
-      document.getElementById('status').className = 'status-checking';
-      document.getElementById('confidence').textContent = 'Analyzing URL security...';
-      document.getElementById('loading-spinner').style.display = 'block'; // Show spinner
-      
-      // Set timeout for API response
-      let responseTimeout = setTimeout(() => {
-        console.log('Request timed out, using offline analysis');
-        chrome.runtime.sendMessage({action: 'useOfflineMode', url: currentUrl}, function(offlineResponse) {
-          updateUI(offlineResponse || {
-            error: 'Request timed out. Using offline analysis.',
-            isOfflineAnalysis: true
-          });
-        });
-      }, 5000); // 5 second timeout
-      
-      // Check the URL and get explanation
-      chrome.runtime.sendMessage({action: 'checkURL', url: currentUrl}, function(response) {
-        clearTimeout(responseTimeout); // Clear the timeout
-        console.log('Received response:', response);
-        if (chrome.runtime.lastError) {
-          console.error('Runtime error:', chrome.runtime.lastError);
-          updateUI({
-            error: chrome.runtime.lastError.message,
-            isOfflineAnalysis: true
-          });
-        } else {
-          // Fetch explanation - try production URL first, then fallback to localhost
-          fetch('https://phishing-detector-api.onrender.com/explain', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({url: currentUrl}),
-            timeout: 5000 // Add timeout to prevent long waits
-          })
-          .then(response => {
-            if (!response.ok) {
-              throw new Error(`HTTP error! Status: ${response.status}`);
-            }
-            return response.json();
-          })
-          .then(explanation => {
-            response.modelExplanation = explanation;
-            updateUI(response);
-          })
-          .catch(error => {
-            console.log('Using response without explanation due to:', error);
-            // Don't show the error to the user, just update UI without explanation
-            updateUI(response); 
-          });
-        }
-      });
-    });
-  } catch (error) {
-    console.error('Popup initialization error:', error);
-    updateUI({error: 'Popup initialization failed'});
-  }
+// Toggle details section
+document.getElementById('details-btn').addEventListener('click', function() {
+  const detailsSection = document.getElementById('details-section');
+  const isVisible = detailsSection.style.display === 'block';
   
-  // Handle recheck button
-  document.getElementById('recheck-btn').addEventListener('click', function() {
-    try {
-      chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-        if (!tabs || tabs.length === 0) {
-          updateUI({error: 'No active tab found'});
+  if (isVisible) {
+    detailsSection.style.display = 'none';
+    this.textContent = '🔍 View Details';
+  } else {
+    detailsSection.style.display = 'block';
+    this.textContent = '🔍 Hide Details';
+  }
+});
+
+// Function to request URL check from background script
+function checkCurrentUrl() {
+  // Show loading spinner
+  document.getElementById('loading-spinner').style.display = 'block';
+  
+  chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+    if (tabs.length === 0) {
+      updateUI({error: 'No active tab found'});
+      return;
+    }
+    
+    const currentUrl = tabs[0].url;
+    const tabId = tabs[0].id;
+    
+    // Skip checking for browser internal pages
+    if (currentUrl.startsWith('chrome://') || 
+        currentUrl.startsWith('chrome-extension://') || 
+        currentUrl.startsWith('about:') ||
+        currentUrl.startsWith('edge://') ||
+        currentUrl.startsWith('brave://') ||
+        currentUrl.startsWith('opera://')) {
+      updateUI({
+        isPhishing: false,
+        confidence: 100,
+        probabilityPhishing: 0,
+        riskLevel: 'SAFE',
+        source: 'internal',
+        isOfflineAnalysis: true
+      });
+      return;
+    }
+    
+    // Request check from background script
+    chrome.runtime.sendMessage(
+      {action: 'checkUrl', url: currentUrl, tabId: tabId},
+      function(response) {
+        if (chrome.runtime.lastError) {
+          console.error('Error sending message:', chrome.runtime.lastError);
+          updateUI({error: 'Communication error with background script'});
           return;
         }
-        const currentUrl = tabs[0].url;
         
-        // Show loading state and spinner
-        document.getElementById('status').textContent = 'Checking...';
-        document.getElementById('status').className = 'status-checking';
-        document.getElementById('confidence').textContent = 'Analyzing URL security...';
-        document.getElementById('loading-spinner').style.display = 'block'; // Show spinner
-
-        chrome.runtime.sendMessage({action: 'checkURL', url: currentUrl}, function(response) {
-          if (chrome.runtime.lastError) {
-            updateUI({error: chrome.runtime.lastError.message});
-          } else {
-            // Fetch explanation
-            fetch('http://localhost:5000/explain', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({url: currentUrl})
-            })
-            .then(response => response.json())
-            .then(explanation => {
-              response.modelExplanation = explanation;
-              updateUI(response);
-            })
-            .catch(error => {
-              console.error('Error fetching explanation:', error);
-              updateUI(response); // Update UI without explanation if fetch fails
-            });
-          }
-        });
-      });
-    } catch (error) {
-      console.error('Recheck error:', error);
-      updateUI({error: 'Recheck failed'});
-    }
-  });
-  
-  // Handle more info button - open history website
-  document.getElementById('more-info-btn').addEventListener('click', function() {
-    try {
-      chrome.tabs.create({url: chrome.runtime.getURL('history.html')});
-    } catch (error) {
-      console.error('Failed to open history page:', error);
-    }
-  });
-  
-  // Handle details button - toggle advanced details
-  document.getElementById('details-btn').addEventListener('click', function() {
-    const threatDetails = document.getElementById('threat-details');
-    const certAnalysis = document.getElementById('cert-analysis');
-    const externalApis = document.getElementById('external-apis');
-    const modelExplanation = document.getElementById('model-explanation');
-    
-    // Toggle visibility with forced display
-    if (threatDetails.style.display === 'none') {
-      // Force display block for all sections
-      threatDetails.style.display = 'block';
-      certAnalysis.style.display = 'block';
-      externalApis.style.display = 'block';
-      modelExplanation.style.display = 'block'; // Show model explanation
-      
-      // Ensure content is visible
-      document.getElementById('threat-details-content').style.display = 'block';
-      document.getElementById('cert-analysis-content').style.display = 'block';
-      document.getElementById('external-apis-content').style.display = 'block';
-      document.getElementById('model-explanation-content').style.display = 'block'; // Show model explanation content
-      
-      this.textContent = '🔍 Hide Details';
-      this.style.backgroundColor = '#dc3545';
-    } else {
-      threatDetails.style.display = 'none';
-      certAnalysis.style.display = 'none';
-      externalApis.style.display = 'none';
-      modelExplanation.style.display = 'none'; // Hide model explanation
-      this.textContent = '🔍 View Details';
-      this.style.backgroundColor = '#28a745';
-    }
-  });
-  
-  // Handle manual URL check
-  document.getElementById('check-button').addEventListener('click', function() {
-    try {
-      const urlInput = document.getElementById('url-input');
-      const url = urlInput.value.trim();
-      
-      if (!url) {
-        updateUI({error: 'Please enter a URL'});
-        return;
-      }
-      
-      // Show loading state and spinner
-      document.getElementById('status').textContent = 'Checking...';
-      document.getElementById('status').className = 'status-checking';
-      document.getElementById('confidence').textContent = 'Analyzing URL security...';
-      document.getElementById('loading-spinner').style.display = 'block'; // Show spinner
-
-      chrome.runtime.sendMessage({action: 'checkURL', url: url}, function(response) {
-        if (chrome.runtime.lastError) {
-          updateUI({error: chrome.runtime.lastError.message});
-        } else {
-          // Fetch explanation
-          fetch('https://phishing-detector-isnv.onrender.com/explain', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({url: url})
-          })
-          .then(response => response.json())
-          .then(explanation => {
-            response.modelExplanation = explanation;
-            updateUI(response);
-          })
-          .catch(error => {
-            console.error('Error fetching explanation:', error);
-            updateUI(response); // Update UI without explanation if fetch fails
-          });
+        if (!response) {
+          updateUI({error: 'No response from background script'});
+          return;
         }
-      });
-    } catch (error) {
-      console.error('Manual URL check error:', error);
-      updateUI({error: 'URL check failed'});
-    }
+        
+        updateUI(response);
+      }
+    );
+  });
+}
+
+// Initialize popup
+document.addEventListener('DOMContentLoaded', function() {
+  checkCurrentUrl();
+  
+  // Add refresh button functionality
+  document.getElementById('refresh-btn').addEventListener('click', function() {
+    checkCurrentUrl();
   });
 });
 
