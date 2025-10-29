@@ -901,7 +901,8 @@ def predict():
         if api_keys.get('virustotal'):
             try:
                 from src.reputation_checker import ReputationChecker
-                reputation_checker = ReputationChecker(api_keys)
+                # Pass api_keys as a named parameter to avoid positional argument error
+                reputation_checker = ReputationChecker(api_keys=api_keys)
                 reputation_results = reputation_checker.check_all_reputations(url)
                 logging.info(f"Reputation check completed for {url}")
             except Exception as e:

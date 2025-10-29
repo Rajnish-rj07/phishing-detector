@@ -7,14 +7,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class ReputationChecker:
-    def __init__(self):
-        self.api_keys = {
-            'virustotal': os.getenv('VIRUSTOTAL_API_KEY'),
-            'google_safebrowsing': os.getenv('GOOGLE_SAFEBROWSING_KEY'),
-            'urlscan': os.getenv('URLSCAN_API_KEY'),
-            'abuseipdb': os.getenv('ABUSEIPDB_API_KEY'),
-            'emailrep': os.getenv('EMAILREP_API_KEY')
-        }
+    def __init__(self, api_keys=None):
+        # Use provided api_keys if available, otherwise use environment variables
+        if api_keys is None:
+            self.api_keys = {
+                'virustotal': os.getenv('VIRUSTOTAL_API_KEY'),
+                'google_safebrowsing': os.getenv('GOOGLE_SAFEBROWSING_KEY'),
+                'urlscan': os.getenv('URLSCAN_API_KEY'),
+                'abuseipdb': os.getenv('ABUSEIPDB_API_KEY'),
+                'emailrep': os.getenv('EMAILREP_API_KEY')
+            }
+        else:
+            self.api_keys = api_keys
+            
         self.cache = {}
         self.cache_expiry = 3600  # 1 hour cache
         # Define reliability weights for each API service
