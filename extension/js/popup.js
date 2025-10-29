@@ -119,9 +119,29 @@ document.addEventListener('DOMContentLoaded', function() {
         return html;
     }
 
+    function createModeIndicator() {
+        const indicator = document.createElement('div');
+        indicator.id = 'mode-indicator';
+        indicator.style.padding = '5px 10px';
+        indicator.style.borderRadius = '4px';
+        indicator.style.color = 'white';
+        indicator.style.fontWeight = 'bold';
+        indicator.style.fontSize = '12px';
+        indicator.style.marginBottom = '10px';
+        indicator.style.textAlign = 'center';
+        indicator.style.display = 'none';
+        document.querySelector('.risk-analysis').insertAdjacentElement('beforebegin', indicator);
+        return indicator;
+    }
+
     function updateUI(response) {
         console.log("Updating UI with response:", response);
 
+        // Set default values for risk analysis
+        phishingProbEl.textContent = '-';
+        riskLevelEl.textContent = '-';
+        lastCheckedEl.textContent = '-';
+        
         spinnerEl.style.display = 'none';
         threatDetailsEl.style.display = 'none';
         certAnalysisEl.style.display = 'none';
@@ -489,9 +509,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Add event listener for More Info button
     moreInfoBtn.addEventListener('click', function() {
-        // Open a new tab with more information about phishing
+        // Open the history page
         chrome.tabs.create({
-            url: 'https://www.phishing.org/what-is-phishing'
+            url: chrome.runtime.getURL('history.html')
         });
     });
 
