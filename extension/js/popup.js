@@ -363,22 +363,29 @@ document.addEventListener('DOMContentLoaded', function() {
             isOfflineAnalysis: true
           });
         } else {
-          // Fetch explanation
-          fetch('http://localhost:5000/explain', {
+          // Fetch explanation - try production URL first, then fallback to localhost
+          fetch('https://phishing-detector-api.onrender.com/explain', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
             },
-            body: JSON.stringify({url: currentUrl})
+            body: JSON.stringify({url: currentUrl}),
+            timeout: 5000 // Add timeout to prevent long waits
           })
-          .then(response => response.json())
+          .then(response => {
+            if (!response.ok) {
+              throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            return response.json();
+          })
           .then(explanation => {
             response.modelExplanation = explanation;
             updateUI(response);
           })
           .catch(error => {
-            console.error('Error fetching explanation:', error);
-            updateUI(response); // Update UI without explanation if fetch fails
+            console.log('Using response without explanation due to:', error);
+            // Don't show the error to the user, just update UI without explanation
+            updateUI(response); 
           });
         }
       });

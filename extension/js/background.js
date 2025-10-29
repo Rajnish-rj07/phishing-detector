@@ -1,4 +1,4 @@
-const API_URL = 'https://phishing-detector-isnv.onrender.com';
+const API_URL = 'https://phishing-detector-api.onrender.com';
 let OFFLINE_MODE = false; // Will be automatically set to true if API is unavailable
 const TEST_MODE = false; // Disabled test mode for real detection
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache for URLs
@@ -76,7 +76,12 @@ async function checkUrlWithAPI(url) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json'
+          'Accept': 'application/json',
+          'X-AbuseIPDB-Key': API_KEYS.ABUSEIPDB,
+          'X-EmailRep-Key': API_KEYS.EMAILREP,
+          'X-GSB-Key': API_KEYS.GOOGLE_SAFE_BROWSING,
+          'X-URLScan-Key': API_KEYS.URLSCAN,
+          'X-VirusTotal-Key': API_KEYS.VIRUSTOTAL
         },
         body: JSON.stringify({
           url: url,
@@ -97,6 +102,8 @@ async function checkUrlWithAPI(url) {
         isPhishing: data.prediction === 1,
         riskLevel: data.risk_level || 'UNKNOWN',
         confidence: Math.round((data.confidence || 0) * 100),
+        probabilityPhishing: Math.round((data.probability_phishing || 0) * 100),
+        probabilityLegitimate: Math.round((data.probability_legitimate || 1) * 100),
         threatDetails: data.threat_details || [],
         certificateAnalysis: data.certificate_analysis || null,
         externalApiResults: data.external_api_results || null,

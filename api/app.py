@@ -920,10 +920,29 @@ def predict():
 
         if not url:
             return jsonify({'error': 'URL is required'}), 400
+            
+        # Extract API keys from headers if available
+        api_keys = {}
+        for api_name in ['ABUSEIPDB', 'VIRUSTOTAL', 'GOOGLE_SAFE_BROWSING', 'URLSCAN']:
+            header_key = f'X-{api_name.replace("_", "-")}-Key'
+            if header_key in request.headers:
+                api_keys[api_name.lower()] = request.headers.get(header_key)
+                logging.info(f"Received API key for {api_name}")
 
         # Use the enhanced feature extractor
         feature_extractor = EnhancedURLFeatureExtractor()
         features = feature_extractor.extract_all_features(url)
+        
+        # Check URL reputation with external APIs if keys are provided
+        reputation_results = {}
+        if api_keys.get('virustotal'):
+            try:
+                from src.reputation_checker import ReputationChecker
+                reputation_checker = ReputationChecker(api_keys)
+                reputation_results = reputation_checker.check_all_reputations(url)
+                logging.info(f"Reputation check completed for {url}")
+            except Exception as e:
+                logging.error(f"Error in reputation check: {e}")
 
         # Prepare features for the model
         # Create a DataFrame from the extracted features
@@ -939,13 +958,15 @@ def predict():
             response = {
                 'prediction': int(prediction[0]),
                 'prediction_proba': prediction_proba.tolist(),
-                'features': features
+                'features': features,
+                'api_results': reputation_results
             }
         else:
             response = {
                 'prediction': -1, # Indicate that the model is not ready
                 'prediction_proba': [0.5, 0.5],
                 'features': features,
+                'api_results': reputation_results,
                 'message': 'Model is not yet trained. Prediction is based on default values.'
             }
 

@@ -33,14 +33,34 @@ class ReputationChecker:
             return {'error': 'VirusTotal API key not found'}
 
         try:
+            # First, submit the URL for scanning
+            scan_response = requests.post(
+                'https://www.virustotal.com/api/v3/urls',
+                headers={'x-apikey': api_key},
+                data={'url': url}
+            )
+            
+            if scan_response.status_code != 200:
+                return {'error': f'VirusTotal API scan error: {scan_response.status_code}'}
+                
+            # Extract the analysis ID from the response
+            scan_data = scan_response.json()
+            analysis_id = scan_data.get('data', {}).get('id')
+            
+            if not analysis_id:
+                return {'error': 'Failed to get analysis ID from VirusTotal'}
+                
+            # Get the analysis results
             response = requests.get(
-                'https://www.virustotal.com/api/v3/urls/{}'.format(url),
+                f'https://www.virustotal.com/api/v3/analyses/{analysis_id}',
                 headers={'x-apikey': api_key}
             )
+            
             if response.status_code == 200:
                 return response.json()
             return {'error': f'VirusTotal API error: {response.status_code}'}
         except Exception as e:
+            print(f"VirusTotal API error: {str(e)}")
             return {'error': str(e)}
 
     def check_google_safe_browsing(self, url):
@@ -186,10 +206,27 @@ class ReputationChecker:
         if weighted_scores and total_weight > 0:
             ensemble_score = sum(score * weight for score, weight in weighted_scores) / total_weight
             reputation_results['ensemble_score'] = ensemble_score
-            reputation_results['confidence'] = min(0.5 + (len(weighted_scores) / len(self.api_weights)) * 0.5, 1.0)
+            confidence_value = min(0.5 + (len(weighted_scores) / len(self.api_weights)) * 0.5, 1.0)
+            reputation_results['confidence'] = confidence_value
+            # Add formatted values for the extension
+            reputation_results['probabilityPhishing'] = int(ensemble_score * 100)
+            reputation_results['confidence_percent'] = int(confidence_value * 100)
+            
+            # Set risk level based on ensemble score
+            if ensemble_score >= 0.7:
+                reputation_results['riskLevel'] = 'HIGH'
+            elif ensemble_score >= 0.4:
+                reputation_results['riskLevel'] = 'MEDIUM'
+            elif ensemble_score >= 0.2:
+                reputation_results['riskLevel'] = 'LOW'
+            else:
+                reputation_results['riskLevel'] = 'SAFE'
         else:
             reputation_results['ensemble_score'] = 0.5  # Neutral score if no data
             reputation_results['confidence'] = 0.3  # Low confidence
+            reputation_results['probabilityPhishing'] = 50
+            reputation_results['confidence_percent'] = 30
+            reputation_results['riskLevel'] = 'UNKNOWN'
 
         return reputation_results
 
@@ -274,17 +311,23 @@ class ReputationChecker:
             # Calculate confidence interval (simplified)
             margin_of_error = 0.5 * (1 - confidence)
             
-            # Prepare result with feature importance
+            # Prepare result with feature importance and format for extension
             result = {
                 'probability_phishing': posterior_probability,
+                'probabilityPhishing': int(posterior_probability * 100),
                 'confidence': confidence,
+                'confidence_percent': int(confidence * 100),
                 'margin_of_error': margin_of_error,
                 'confidence_interval': [
                     max(0, posterior_probability - margin_of_error),
                     min(1, posterior_probability + margin_of_error)
                 ],
                 'features': features,
-                'feature_importance': feature_importance
+                'feature_importance': feature_importance,
+                'isPhishing': posterior_probability > 0.5,
+                'riskLevel': 'HIGH' if posterior_probability > 0.7 else 
+                            'MEDIUM' if posterior_probability > 0.4 else
+                            'LOW' if posterior_probability > 0.2 else 'SAFE'
             }
             
             # Cache result
