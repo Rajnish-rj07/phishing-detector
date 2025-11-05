@@ -534,9 +534,9 @@ def analyze_url():
         logging.error(f"Error analyzing URL: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-def check_virustotal(url):
+def check_virustotal(url, api_key):
     """Check URL against VirusTotal API"""
-    if not API_KEYS['virustotal']:
+    if not api_key:
         return None
         
     try:
@@ -582,9 +582,9 @@ def check_virustotal(url):
         print(f"Error checking VirusTotal: {e}")
         return None
 
-def check_google_safebrowsing(url):
+def check_google_safebrowsing(url, api_key):
     """Check URL against Google Safe Browsing API"""
-    if not API_KEYS['google_safebrowsing']:
+    if not api_key:
         return None
         
     try:
@@ -623,9 +623,9 @@ def check_google_safebrowsing(url):
         print(f"Error checking Google Safe Browsing: {e}")
         return None
 
-def check_urlscan(url):
+def check_urlscan(url, api_key):
     """Check URL against urlscan.io API"""
-    if not API_KEYS['urlscan']:
+    if not api_key:
         return None
         
     try:
