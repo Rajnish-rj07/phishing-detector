@@ -470,130 +470,60 @@ async function checkUrlWithAPI(url) {
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  try {
-    if (request.action === 'checkURL') {
-      console.log('Checking URL:', request.url);
-      
-      if (!request.url) {
-        sendResponse({
-          error: 'No URL provided',
-          isPhishing: false,
-          riskLevel: 'UNKNOWN',
-          confidence: 0
-        });
-        return true;
-      }
-      
-      // Check cache first for faster response
-      const cachedResult = checkCache(request.url);
-      if (cachedResult && !TEST_MODE) {
-        console.log('Using cached result for:', request.url);
-        sendResponse(cachedResult);
-        return true;
-      }
+    (async () => {
+        try {
+            if (request.action === 'checkURL') {
+                console.log('Checking URL:', request.url);
 
-      // Use enhanced API with external integrations
-      checkUrlWithAPI(request.url)
-        .then(result => {
-          // Cache the result for future quick access
-          cacheResult(request.url, result);
-          
-          // Store in history
-          try {
-            storeUrlHistory(result);
-          } catch (historyError) {
-            console.warn('Failed to store URL history:', historyError);
-          }
-          
-          sendResponse(result);
-        })
-        .catch(error => {
-          console.error('Detection Error:', error);
-          const fallbackResult = {
-            url: request.url,
-            error: error.message || 'Detection failed',
-            isPhishing: false,
-            riskLevel: 'UNKNOWN',
-            confidence: 0,
-            probabilityPhishing: 0,
-            probabilityLegitimate: 100
-          };
-          sendResponse(fallbackResult);
-        });
+                if (!request.url) {
+                    sendResponse({
+                        error: 'No URL provided',
+                        isPhishing: false,
+                        riskLevel: 'UNKNOWN',
+                        confidence: 0
+                    });
+                    return;
+                }
 
-      return true; // Keep message channel open
-    }
-    
-    if (request.action === 'useOfflineMode') {
-      console.log('Forced offline mode for URL:', request.url);
-      const offlineResult = analyzeUrlLocally(request.url);
-      offlineResult.isOfflineAnalysis = true;
-      sendResponse(offlineResult);
-      return true;
-    }
-    
-    if (request.action === 'checkEmail') {
-      console.log('Checking email:', request.email);
-      
-      if (!request.email) {
-        sendResponse({
-          error: 'No email provided',
-          isPhishing: false,
-          riskLevel: 'UNKNOWN',
-          confidence: 0
-        });
-        return true;
-      }
-      
-      // Check cache first
-      const cachedResult = checkCache(request.email);
-      if (cachedResult) {
-        console.log('Using cached result for:', request.email);
-        sendResponse(cachedResult);
-        return true;
-      }
+                // Check cache first for faster response
+                const cachedResult = checkCache(request.url);
+                if (cachedResult && !TEST_MODE) {
+                    console.log('Using cached result for:', request.url);
+                    sendResponse(cachedResult);
+                    return;
+                }
 
-      // Simple email validation and domain checking
-      checkEmailSafety(request.email)
-        .then(result => {
-          // Cache the result
-          cacheResult(request.email, result);
-          
-          // Store in email history
-          try {
-            storeEmailHistory(result);
-          } catch (historyError) {
-            console.warn('Failed to store email history:', historyError);
-          }
-          
-          sendResponse(result);
-        })
-        .catch(error => {
-          console.error('Email Check Error:', error);
-          sendResponse({
-            email: request.email,
-            error: 'Email Check Error',
-            message: error.toString(),
-            isPhishing: false,
-            riskLevel: 'UNKNOWN',
-            confidence: 0
-          });
-        });
-      
-      return true; // Keep message channel open
-    }
-  } catch (globalError) {
-    console.error('Global message handler error:', globalError);
-    sendResponse({
-      error: 'Internal error',
-      message: globalError.toString(),
-      isPhishing: false,
-      riskLevel: 'UNKNOWN',
-      confidence: 0
-    });
-  }
-  
-  return true;
+                // Use enhanced API with external integrations
+                const result = await checkUrlWithAPI(request.url);
+
+                // Cache the result for future quick access
+                cacheResult(request.url, result);
+
+                // Store in history
+                try {
+                    storeUrlHistory(result);
+                } catch (historyError) {
+                    console.warn('Failed to store URL history:', historyError);
+                }
+
+                sendResponse(result);
+            }
+        } catch (error) {
+            console.error('Detection Error:', error);
+            const fallbackResult = {
+                url: request.url, // Use request.url as fallback
+                error: error.message || 'Detection failed',
+                isPhishing: false,
+                riskLevel: 'UNKNOWN',
+                confidence: 0,
+                probabilityPhishing: 0,
+                probabilityLegitimate: 100
+            };
+            sendResponse(fallbackResult);
+        }
+    })();
+
+    return true; // Keep message channel open for async response
 });
 
 // PhishTank integration function
@@ -952,26 +882,31 @@ function cleanCache() {
 
 // History storage functions
 function storeUrlHistory(result) {
-  chrome.storage.local.get(['urlHistory'], (data) => {
-    const urlHistory = data.urlHistory || [];
-    
-    // Add timestamp to result
-    const historyItem = {
-      ...result,
-      timestamp: Date.now()
-    };
-    
-    // Add to beginning of array (most recent first)
-    urlHistory.unshift(historyItem);
-    
-    // Limit history to 100 items
-    if (urlHistory.length > 100) {
-      urlHistory.pop();
-    }
-    
-    // Save updated history
-    chrome.storage.local.set({urlHistory: urlHistory});
-  });
+    chrome.storage.local.get(['urlHistory'], (data) => {
+        const urlHistory = data.urlHistory || [];
+
+        // Ensure all required fields are present
+        const historyItem = {
+            url: result.url,
+            riskLevel: result.riskLevel || 'UNKNOWN', // Default to UNKNOWN if not provided
+            confidence: result.confidence || 0, // Default to 0 if not provided
+            isPhishing: result.isPhishing || false,
+            threatDetails: result.threatDetails || [],
+            externalApiResults: result.externalApiResults || {},
+            timestamp: Date.now()
+        };
+
+        // Add to beginning of array (most recent first)
+        urlHistory.unshift(historyItem);
+
+        // Limit history to 100 items
+        if (urlHistory.length > 100) {
+            urlHistory.pop();
+        }
+        
+        // Save updated history
+        chrome.storage.local.set({urlHistory: urlHistory});
+    });
 }
 
 function storeEmailHistory(result) {

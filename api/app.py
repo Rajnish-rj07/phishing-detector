@@ -31,15 +31,13 @@ import pickle
 import joblib
 from datetime import datetime, timedelta
 from src.feature_extractor import EnhancedURLFeatureExtractor
-from src.online_mode import OnlineLearningModel # Import OnlineLearningModel
+
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins for development
 
-# Initialize ThreadPoolExecutor for async tasks
-executor = ThreadPoolExecutor(max_workers=5)
 
 # Simple in-memory cache for external API responses
 cache = {}
@@ -63,10 +61,7 @@ def cached_post(url, data=None, json=None, headers=None, timeout=5):
     cache[cache_key] = {'response': response, 'timestamp': time.time()}
     return response
 
-# Global variables for model updates
-MODEL_UPDATE_INTERVAL = 24 * 60 * 60  # 24 hours in seconds
-FEEDBACK_DATA_PATH = os.path.join(os.path.dirname(__file__), 'feedback_data.json')
-LAST_UPDATE_PATH = os.path.join(os.path.dirname(__file__), 'last_update.txt')
+
 MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_pipeline.pkl')
 
 # API keys for external services (replace with your actual API keys)
@@ -103,97 +98,21 @@ def feedback():
     if not data or 'url' not in data or 'is_phishing' not in data:
         return jsonify({'error': 'Invalid feedback data'}), 400
 
+    # This endpoint will now only log feedback, not use it for retraining.
     url = data['url']
     is_phishing = data['is_phishing']
-
-    # Store feedback for model retraining
-    feedback_entry = {
-        'url': url,
-        'is_phishing': is_phishing,
-        'timestamp': datetime.now().isoformat()
-    }
-
-    try:
-        with open(FEEDBACK_DATA_PATH, 'a') as f:
-            f.write(json.dumps(feedback_entry) + '\n')
-        logging.info(f"Feedback received for {url}: {'phishing' if is_phishing else 'legitimate'}")
-        return jsonify({'message': 'Feedback received successfully'}), 200
-    except Exception as e:
-        logging.error(f"Error saving feedback: {e}")
-        return jsonify({'error': 'Failed to save feedback'}), 500
-
-def retrain_model_from_feedback():
-    """Retrain the model using collected feedback"""
-    if not os.path.exists(FEEDBACK_DATA_PATH):
-        logging.info("No feedback data found, skipping retraining.")
-        return
-
-    try:
-        with open(FEEDBACK_DATA_PATH, 'r') as f:
-            feedback_data = [json.loads(line) for line in f]
-
-        if not feedback_data:
-            logging.info("Feedback data is empty, skipping retraining.")
-            return
-
-        # Prepare data for retraining
-        urls = [item['url'] for item in feedback_data]
-        labels = [1 if item['is_phishing'] else 0 for item in feedback_data]
-
-        # Create features
-        feature_extractor = EnhancedURLFeatureExtractor(None)
-        features = [feature_extractor.extract_all_features(url) for url in urls]
-
-        # Convert to DataFrame
-        df = pd.DataFrame(features)
-        df['label'] = labels
-
-        # Separate features and labels
-        X = df.drop('label', axis=1)
-        y = df['label']
-
-        # Load the existing model
-        online_model = OnlineLearningModel()
-        online_model.load_model(MODEL_PATH)
-
-        # Perform incremental training
-        online_model.incremental_train(X, y)
-
-        # Save the updated model
-        online_model.save_model(MODEL_PATH)
-
-        # Clear feedback data after retraining
-        open(FEEDBACK_DATA_PATH, 'w').close()
-
-        logging.info("Model retrained successfully from feedback.")
-
-    except Exception as e:
-        logging.error(f"Error during model retraining: {e}")
-
-def check_and_retrain_model():
-    """Check if model needs retraining and trigger it"""
-    while True:
-        time.sleep(MODEL_UPDATE_INTERVAL)
-        logging.info("Checking for model update...")
-        retrain_model_from_feedback()
+    logging.info(f"Feedback received for {url}: {'phishing' if is_phishing else 'legitimate'}")
+    return jsonify({'message': 'Feedback received successfully'}), 200
 
 
-# Replace before_first_request with a function that runs after app startup
-def start_background_tasks():
-    executor.submit(check_and_retrain_model)
-
-# Register the function to run after app startup
-with app.app_context():
-    start_background_tasks()
-
-def check_abuseipdb(ip):
+def check_abuseipdb(ip, api_key):
     """Check IP reputation with AbuseIPDB"""
-    if not API_KEYS['abuseipdb']:
+    if not api_key:
         return {'error': 'AbuseIPDB API key not configured', 'is_malicious': False}
     
     try:
         headers = {
-            'Key': API_KEYS['abuseipdb'],
+            'Key': api_key,
             'Accept': 'application/json',
         }
         params = {
@@ -233,14 +152,14 @@ def check_abuseipdb(ip):
             'is_malicious': False
         }
 
-def check_emailrep(email):
+def check_emailrep(email, api_key):
     """Check email reputation using EmailRep API"""
-    if not API_KEYS['emailrep']:
+    if not api_key:
         return {'error': 'EmailRep API key not configured'}
     
     try:
         headers = {
-            'Key': API_KEYS['emailrep'],
+            'Key': api_key,
             'User-Agent': 'PhishingDetector/1.0'
         }
         response = requests.get(
@@ -392,7 +311,7 @@ def check_ssl_certificate(domain):
             'error': str(e)
         }
 
-def aggregate_threat_details(url, domain, emails=None):
+def aggregate_threat_details(url, domain, api_keys, emails=None):
     """Aggregate threat details from all available sources"""
     threat_details = {
         'url': url,
@@ -419,42 +338,42 @@ def aggregate_threat_details(url, domain, emails=None):
         threat_details['recommendations'].append('Verify SSL certificate configuration')
     
     # VirusTotal Check
-    if API_KEYS['virustotal']:
-        vt_result = check_virustotal(url)
+    if api_keys.get('virustotal'):
+        vt_result = check_virustotal(url, api_keys['virustotal'])
         threat_details['security_checks']['virustotal'] = vt_result
-        if vt_result.get('malicious', 0) > 0:
+        if vt_result and vt_result.get('malicious', 0) > 0:
             threat_details['threat_indicators'].append(
                 f'VirusTotal: {vt_result.get("malicious", 0)} security vendors flagged as malicious'
             )
     
     # Google Safe Browsing Check
-    if API_KEYS['safebrowsing']:
-        gsb_result = check_google_safebrowsing(url)
+    if api_keys.get('google_safebrowsing'):
+        gsb_result = check_google_safebrowsing(url, api_keys['google_safebrowsing'])
         threat_details['security_checks']['google_safebrowsing'] = gsb_result
-        if gsb_result.get('matches'):
+        if gsb_result and gsb_result.get('matches'):
             threat_details['threat_indicators'].append('Google Safe Browsing: Threats detected')
     
     # URLScan Check
-    if API_KEYS['urlscan']:
-        urlscan_result = check_urlscan(url)
+    if api_keys.get('urlscan'):
+        urlscan_result = check_urlscan(url, api_keys['urlscan'])
         threat_details['security_checks']['urlscan'] = urlscan_result
-        if urlscan_result.get('malicious'):
+        if urlscan_result and urlscan_result.get('malicious'):
             threat_details['threat_indicators'].append('URLScan: Malicious indicators found')
     
     # AbuseIPDB Check
-    if API_KEYS['abuseipdb']:
-        abuse_result = check_abuseipdb(domain)
+    if api_keys.get('abuseipdb'):
+        abuse_result = check_abuseipdb(domain, api_keys['abuseipdb'])
         threat_details['security_checks']['abuseipdb'] = abuse_result
-        if abuse_result.get('abuseConfidenceScore', 0) > 25:
+        if abuse_result and abuse_result.get('abuseConfidenceScore', 0) > 25:
             threat_details['threat_indicators'].append(
                 f'AbuseIPDB: Abuse confidence score {abuse_result.get("abuseConfidenceScore")}%'
             )
     
     # Email Analysis
-    if emails and API_KEYS['emailrep']:
+    if emails and api_keys.get('emailrep'):
         threat_details['email_analysis'] = {}
         for email in emails:
-            email_result = check_emailrep(email)
+            email_result = check_emailrep(email, api_keys['emailrep'])
             threat_details['email_analysis'][email] = {
                 'reputation': email_result.get('reputation'),
                 'risk_level': calculate_email_risk_level(email_result),
@@ -593,7 +512,7 @@ def analyze_url():
             logging.warning(f"Missing API keys: {', '.join(missing_keys)}")
         
         # Get comprehensive threat analysis
-        threat_analysis = aggregate_threat_details(url, domain, emails)
+        threat_analysis = aggregate_threat_details(url, domain, API_KEYS, emails)
         
         # Prepare response
         response = {
@@ -774,103 +693,20 @@ def check_urlscan(url):
         print(f"Error checking URLScan: {e}")
         return None
 
-def check_for_model_update():
-    """Check if model needs to be updated based on feedback data"""
-    global current_model
-    try:
-        # Check if it's time to update or if model is not loaded yet
-        if current_model is None:
-            print("Model not loaded, attempting initial load or training.")
-            # Attempt to load existing model
-            model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_pipeline.pkl')
-            if os.path.exists(model_path):
-                # current_model = joblib.load(model_path) # Old line
-                current_model_instance = OnlineLearningModel()
-                if current_model_instance.load_model():
-                    current_model = current_model_instance
-                print("Model loaded successfully during check_for_model_update.")
-            else:
-                print("No existing model found. Will train a new one if enough feedback data.")
-
-        if current_model is not None and os.path.exists(LAST_UPDATE_PATH):
-            with open(LAST_UPDATE_PATH, 'r') as f:
-                last_update = datetime.fromisoformat(f.read().strip())
-                if (datetime.now() - last_update).total_seconds() < MODEL_UPDATE_INTERVAL:
-                    return False  # Not time to update yet
-        elif current_model is not None: # If no last update file, but model exists, create one
-            with open(LAST_UPDATE_PATH, 'w') as f:
-                f.write(datetime.now().isoformat())
-            return False
-
-        # If model is still None and no feedback data, can't do anything
-        if not os.path.exists(FEEDBACK_DATA_PATH):
-            if current_model is None:
-                print("No feedback data and no existing model. Cannot update or train.")
-            return False
-            
-        with open(FEEDBACK_DATA_PATH, 'r') as f:
-            feedback_data = json.load(f)
-            
-        if len(feedback_data) < 10:  # Need at least 10 feedback items to update
-            if current_model is None:
-                print("Not enough feedback data to train a new model.")
-            return False
-            
-        # Implement actual model update logic
-        try:
-            # 1. Load the current model if not already loaded or if it needs retraining
-            if current_model is None:
-                current_model = OnlineLearningModel(feature_extractor=extractor)
-                print("Initialized new OnlineLearningModel for training.")
-            
-            # 2. Create a training dataset from feedback
-            X_new = []
-            y_new = []
-        
-            for item in feedback_data:
-                # Extract features from URL
-                url = item.get('url', '')
-                if url:
-                    features = extractor.extract_all_features(url)
-                    X_new.append(features)
-                    # Use the corrected label from feedback
-                    y_new.append(1 if item.get('is_phishing', False) else 0)
-        
-            if len(X_new) > 0:
-                X_new_df = pd.DataFrame(X_new)
-                current_model.incremental_update(X_new_df, y_new)
-                current_model.save_model()
-                print(f"Model updated with {len(X_new)} new samples")
-                
-                # Clear processed feedback to avoid retraining on same data
-                with open(FEEDBACK_DATA_PATH, 'w') as f:
-                    json.dump([], f)
-        except Exception as model_error:
-            print(f"Error during model update: {model_error}")
-            # Continue execution even if model update fails
-        
-        # Update the timestamp
-        with open(LAST_UPDATE_PATH, 'w') as f:
-            f.write(datetime.now().isoformat())
-            
-        return True
-    except Exception as e:
-        print(f"Error checking for model update: {e}")
-        return False
-
 current_model = None
 
 def load_model():
     global current_model
     model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_pipeline.pkl')
     if os.path.exists(model_path):
-        # current_model = joblib.load(model_path) # Old line
-        current_model_instance = OnlineLearningModel()
-        if current_model_instance.load_model():
-            current_model = current_model_instance
-        print("Model loaded successfully.")
+        try:
+            current_model = joblib.load(model_path)
+            print("Model loaded successfully.")
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            current_model = None
     else:
-        print("No model found at startup. Model will be initialized on first update or training.")
+        print("No model found at startup. Predictions will rely on API checks only.")
 
 with app.app_context():
     load_model()
@@ -884,55 +720,73 @@ def predict():
         if not url:
             return jsonify({'error': 'URL is required'}), 400
             
-        # Extract API keys from headers if available
-        api_keys = {}
-        for api_name in ['ABUSEIPDB', 'VIRUSTOTAL', 'GOOGLE_SAFE_BROWSING', 'URLSCAN']:
+        domain = urlparse(url).netloc
+
+        # Extract API keys from headers if available, otherwise use environment variables
+        api_keys = API_KEYS.copy()
+        for api_name in ['ABUSEIPDB', 'VIRUSTOTAL', 'GOOGLE_SAFE_BROWSING', 'URLSCAN', 'EMAILREP']:
             header_key = f'X-{api_name.replace("_", "-")}-Key'
             if header_key in request.headers:
                 api_keys[api_name.lower()] = request.headers.get(header_key)
-                logging.info(f"Received API key for {api_name}")
+                logging.info(f"Received API key for {api_name} from header")
 
-        # Use the enhanced feature extractor
-        feature_extractor = EnhancedURLFeatureExtractor()
-        features = feature_extractor.extract_all_features(url)
-        
-        # Check URL reputation with external APIs if keys are provided
-        reputation_results = {}
-        if api_keys.get('virustotal'):
+        # Get comprehensive threat analysis from external APIs
+        threat_analysis = aggregate_threat_details(url, domain, api_keys)
+
+        # Use the loaded model for prediction
+        prediction = -1
+        prediction_proba = [0.5, 0.5]
+        model_message = 'Model not loaded. Prediction is based on API checks.'
+
+        if current_model:
             try:
-                from src.reputation_checker import ReputationChecker
-                # Pass api_keys as a named parameter to avoid positional argument error
-                reputation_checker = ReputationChecker(api_keys=api_keys)
-                reputation_results = reputation_checker.check_all_reputations(url)
-                logging.info(f"Reputation check completed for {url}")
+                feature_extractor = EnhancedURLFeatureExtractor()
+                features = feature_extractor.extract_all_features(url)
+                features_df = pd.DataFrame([features])
+                
+                # This is a simplified approach; a more robust solution would handle column differences.
+                if hasattr(current_model, 'steps'):
+                    model_cols = current_model.steps[-1][1].feature_names_in_
+                    features_df = features_df.reindex(columns=model_cols, fill_value=0)
+
+                prediction_proba = current_model.predict_proba(features_df)
+                prediction = int(current_model.predict(features_df)[0])
+                model_message = 'Prediction from loaded model.'
             except Exception as e:
-                logging.error(f"Error in reputation check: {e}")
+                logging.error(f"Error during model prediction: {e}")
+                model_message = f"Error during model prediction: {e}"
 
-        # Prepare features for the model
-        # Create a DataFrame from the extracted features
-        features_df = pd.DataFrame([features])
-        features_df['url'] = url 
+        # Combine model prediction with API analysis
+        final_risk_level = threat_analysis.get('risk_level', 'Unknown')
+        confidence = 0.0
 
-        # Get prediction
-        # Use the online_model variable that's defined in the file
-        if 'online_model' in globals() and online_model.is_fitted:
-            prediction_proba = online_model.predict_proba(features_df)
-            prediction = online_model.predict(features_df)
-            
-            response = {
-                'prediction': int(prediction[0]),
+        if prediction == 1:
+            final_risk_level = "High" if final_risk_level not in ["Critical", "High"] else final_risk_level
+            confidence = max(confidence, prediction_proba[0][1])
+        
+        # Adjust confidence based on API results
+        if final_risk_level == "Critical":
+            confidence = max(confidence, 0.95)
+        elif final_risk_level == "High":
+            confidence = max(confidence, 0.8)
+        elif final_risk_level == "Medium":
+            confidence = max(confidence, 0.6)
+        elif final_risk_level == "Low":
+            confidence = max(confidence, 0.3)
+
+        response = {
+            'url': url,
+            'riskLevel': final_risk_level,
+            'confidence': round(confidence * 100, 2),
+            'isPhishing': prediction == 1 or final_risk_level in ["High", "Critical"],
+            'threatDetails': threat_analysis.get('threat_indicators', []),
+            'externalApiResults': threat_analysis.get('security_checks', {}),
+            'model_prediction': {
+                'prediction': prediction,
                 'prediction_proba': prediction_proba.tolist(),
-                'features': features,
-                'api_results': reputation_results
+                'message': model_message
             }
-        else:
-            response = {
-                'prediction': -1, # Indicate that the model is not ready
-                'prediction_proba': [0.5, 0.5],
-                'features': features,
-                'api_results': reputation_results,
-                'message': 'Model is not yet trained. Prediction is based on default values.'
-            }
+        }
 
         return jsonify(response)
 
@@ -1041,31 +895,28 @@ def batch_predict():
         results = []
         for url in urls:
             try:
-                # Check if model needs to be updated
-                check_for_model_update()
-
-                # Extract features
-                features = extractor.extract_all_features(url)
+                # This endpoint now provides a simplified analysis without the full model prediction
+                # for batch processing speed. For full analysis, use the /predict endpoint.
+                # for batch processing speed. For full analysis, use the /predict endpoint.
+                feature_extractor = EnhancedURLFeatureExtractor()
+                features = feature_extractor.extract_all_features(url)
                 
-                # Simple risk calculation
                 risk_score = 0.1
-                if features['suspicious_keywords']:
+                if features.get('suspicious_keywords', 0) > 0:
                     risk_score += 0.4
-                if features['has_ip']:
+                if features.get('has_ip', 0) > 0:
                     risk_score += 0.3
-                if not features['has_https']:
+                if features.get('has_https', 0) == 0:
                     risk_score += 0.2
                 
                 risk_score = min(risk_score, 1.0)
-                prediction = 1 if risk_score > 0.5 else 0
+                is_phishing = risk_score > 0.5
                 
                 results.append({
                     'url': url,
                     'is_phishing': is_phishing,
-                    'phishing_probability': phishing_probability,
-                    'risk_level': risk_level,
-                    'threat_details': threat_details,
-                    'external_api_results': external_api_results
+                    'phishing_probability': risk_score,
+                    'risk_level': "High" if is_phishing else "Low",
                 })
                 
             except Exception as e:

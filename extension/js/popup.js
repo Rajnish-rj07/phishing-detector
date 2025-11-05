@@ -200,260 +200,79 @@ document.addEventListener('DOMContentLoaded', function() {
             statusEl.className = 'status-safe';
         }
 
-        const confidence = response.confidence || response.confidence_percent || 0;
+        const confidence = response.confidence || 0;
         confidenceEl.textContent = `${confidence}% confidence`;
 
-        const phishingProb = response.probabilityPhishing || Math.round(confidence);
+        const phishingProb = Math.round(confidence);
         phishingProbEl.textContent = `${phishingProb}%`;
 
         riskLevelEl.textContent = response.riskLevel || 'LOW';
         lastCheckedEl.textContent = new Date().toLocaleString();
 
+        // Updated threat details parsing
         if (response.threatDetails && response.threatDetails.length > 0) {
-            threatDetailsContentEl.innerHTML = '';
-            response.threatDetails.forEach(threat => {
-                const threatElement = document.createElement('div');
-                threatElement.style.marginBottom = '8px';
-                threatElement.style.padding = '4px';
-                threatElement.style.borderLeft = '3px solid ' + getSeverityColor(threat.severity);
-                threatElement.style.paddingLeft = '8px';
-                threatElement.innerHTML = `
-          <strong>${threat.type}</strong>: ${threat.description}
-          <span style="display: inline-block; margin-left: 5px; padding: 2px 5px; border-radius: 3px; font-size: 10px; background: ${getSeverityColor(threat.severity)}; color: white;">${threat.severity}</span>
-        `;
-                threatDetailsContentEl.appendChild(threatElement);
-            });
+            threatDetailsContentEl.innerHTML = response.threatDetails.map(threat => `<p>${threat}</p>`).join('');
             threatDetailsEl.style.display = 'block';
-        } else if (response.api_results && response.api_results.reputation_results) {
-            threatDetailsContentEl.innerHTML = '';
-            const repResults = response.api_results.reputation_results;
-            const threats = [];
-
-            if (repResults.virustotal && repResults.virustotal.malicious > 0) {
-                threats.push({
-                    type: 'VirusTotal',
-                    description: `Flagged by ${repResults.virustotal.malicious} security vendors as malicious.`,
-                    severity: 'HIGH'
-                });
-            }
-
-            if (repResults.google_safe_browsing && repResults.google_safe_browsing.matches) {
-                threats.push({
-                    type: 'Google Safe Browsing',
-                    description: 'This URL has been flagged as unsafe by Google Safe Browsing.',
-                    severity: 'HIGH'
-                });
-            }
-
-            if (repResults.urlscan && repResults.urlscan.malicious) {
-                threats.push({
-                    type: 'URLScan.io',
-                    description: 'This URL has been identified as potentially malicious by URLScan.io.',
-                    severity: 'MEDIUM'
-                });
-            }
-
-            if (repResults.abuseipdb && repResults.abuseipdb.abuseConfidenceScore > 50) {
-                threats.push({
-                    type: 'AbuseIPDB',
-                    description: `The IP address has an abuse confidence score of ${repResults.abuseipdb.abuseConfidenceScore}%.`,
-                    severity: repResults.abuseipdb.abuseConfidenceScore > 80 ? 'HIGH' : 'MEDIUM'
-                });
-            }
-
-            if (threats.length === 0 && response.probabilityPhishing > 70) {
-                threats.push({
-                    type: 'ML Detection',
-                    description: 'Our machine learning model detected suspicious patterns in this URL.',
-                    severity: response.probabilityPhishing > 90 ? 'HIGH' : 'MEDIUM'
-                });
-            }
-
-            if (threats.length > 0) {
-                threats.forEach(threat => {
-                    const threatElement = document.createElement('div');
-                    threatElement.style.marginBottom = '8px';
-                    threatElement.style.padding = '4px';
-                    threatElement.style.borderLeft = '3px solid ' + getSeverityColor(threat.severity);
-                    threatElement.style.paddingLeft = '8px';
-                    threatElement.innerHTML = `
-            <strong>${threat.type}</strong>: ${threat.description}
-            <span style="display: inline-block; margin-left: 5px; padding: 2px 5px; border-radius: 3px; font-size: 10px; background: ${getSeverityColor(threat.severity)}; color: white;">${threat.severity}</span>
-          `;
-                    threatDetailsContentEl.appendChild(threatElement);
-                });
-                threatDetailsEl.style.display = 'block';
-            }
         }
 
-        if (response.certificateAnalysis) {
-            const cert = response.certificateAnalysis;
-            let certStatus = 'Valid';
-            let certColor = '#28a745';
-            let securityLevel = cert.security_level || 'MEDIUM';
-            let securityScore = cert.security_score || 0;
-
-            if (!cert.valid || cert.is_expired || cert.is_self_signed) {
-                certStatus = 'Invalid';
-                certColor = '#dc3545';
-            } else if (cert.is_short_lived) {
-                certStatus = 'Suspicious';
-                certColor = '#ffc107';
+        // Display SSL certificate information
+        if (response.externalApiResults && response.externalApiResults.ssl_certificate) {
+            const cert = response.externalApiResults.ssl_certificate;
+            let content = '';
+            if (cert.error) {
+                content = `<p class="error">SSL Certificate Error: ${cert.error}</p>`;
+            } else {
+                content = `
+                    <p><strong>Issuer:</strong> ${cert.issuer}</p>
+                    <p><strong>Subject:</strong> ${cert.subject}</p>
+                    <p><strong>Valid From:</strong> ${new Date(cert.valid_from).toLocaleString()}</p>
+                    <p><strong>Valid To:</strong> ${new Date(cert.valid_to).toLocaleString()}</p>
+                    <p><strong>Expired:</strong> ${cert.is_expired ? 'Yes' : 'No'}</p>
+                `;
             }
-
-            if (securityLevel === 'LOW' || securityScore < 50) {
-                securityColor = '#dc3545';
-            } else if (securityLevel === 'MEDIUM' || securityScore < 80) {
-                securityColor = '#ffc107';
-            }
-
-            certAnalysisContentEl.innerHTML = `
-        <div style="margin-bottom: 5px;">
-          <strong>Status:</strong> <span style="color: ${certColor}">${certStatus}</span>
-        </div>
-        <div style="margin-bottom: 5px;">
-          <strong>Security Score:</strong> <span style="color: ${securityColor}">${securityScore}/100 (${securityLevel})</span>
-        </div>
-        <div style="margin-bottom: 5px;">
-          <strong>Issuer:</strong> ${cert.issuer || 'Unknown'}
-        </div>
-        <div style="margin-bottom: 5px;">
-          <strong>Valid Until:</strong> ${cert.valid_until || 'Unknown'}
-        </div>
-        <div style="margin-bottom: 5px;">
-          <strong>Remaining Days:</strong> ${cert.remaining_days || 'Unknown'}
-        </div>
-      `;
-
-            if (cert.advanced_security) {
-                const advanced = cert.advanced_security;
-                certAnalysisContentEl.innerHTML += `
-          <div style="margin-top: 10px; margin-bottom: 5px;">
-            <strong>Advanced Security Features:</strong>
-          </div>
-          <div style="margin-bottom: 5px;">
-            <strong>Extended Validation:</strong> ${advanced.extended_validation ?
-                    '<span style="color: #28a745">Yes</span>' :
-                    '<span style="color: #dc3545">No</span>'}
-          </div>
-          <div style="margin-bottom: 5px;">
-            <strong>TLS Version:</strong> ${advanced.tls_version || 'Unknown'}
-          </div>
-          <div style="margin-bottom: 5px;">
-            <strong>Certificate Transparency:</strong> ${advanced.has_sct ?
-                    '<span style="color: #28a745">Yes</span>' :
-                    '<span style="color: #dc3545">No</span>'}
-          </div>
-          <div style="margin-bottom: 5px;">
-            <strong>OCSP Stapling:</strong> ${advanced.ocsp_stapling ?
-                    '<span style="color: #28a745">Yes</span>' :
-                    '<span style="color: #dc3545">No</span>'}
-          </div>
-        `;
-            }
+            certAnalysisContentEl.innerHTML = content;
             certAnalysisEl.style.display = 'block';
         }
 
-        if (response.externalApiResults && Object.keys(response.externalApiResults).length > 0) {
+        // Display external API results
+        if (response.externalApiResults) {
             const apis = response.externalApiResults;
-            externalApisContentEl.innerHTML = '';
-
-            if (apis.virustotal) {
-                const vtElement = document.createElement('div');
-                vtElement.style.marginBottom = '8px';
-                vtElement.innerHTML = `
-          <strong>VirusTotal:</strong> ${apis.virustotal.is_malicious ?
-                    `<span style="color: #dc3545">Malicious (${apis.virustotal.malicious} detections)</span>` :
-                    '<span style="color: #28a745">Clean</span>'}
-        `;
-                externalApisContentEl.appendChild(vtElement);
+            let content = '';
+            if (apis.virustotal && apis.virustotal.malicious) {
+                content += `<p><strong>VirusTotal:</strong> ${apis.virustotal.malicious} vendors flagged as malicious.</p>`;
             }
-
-            if (apis.phishtank) {
-                const ptElement = document.createElement('div');
-                ptElement.style.marginBottom = '8px';
-                ptElement.innerHTML = `
-          <strong>PhishTank:</strong> ${apis.phishtank.is_malicious ?
-                    `<span style="color: #dc3545">Verified Phishing Site</span>` :
-                    '<span style="color: #28a745">Not in Database</span>'}
-        `;
-                externalApisContentEl.appendChild(ptElement);
+            if (apis.google_safebrowsing && apis.google_safebrowsing.matches) {
+                content += `<p><strong>Google Safe Browsing:</strong> Threats detected.</p>`;
             }
-
-            if (apis.google_safebrowsing) {
-                const gsbElement = document.createElement('div');
-                gsbElement.style.marginBottom = '8px';
-                gsbElement.innerHTML = `
-          <strong>Google Safe Browsing:</strong> ${apis.google_safebrowsing.is_malicious ?
-                    `<span style="color: #dc3545">Flagged as ${apis.google_safebrowsing.threat_type || 'malicious'}</span>` :
-                    '<span style="color: #28a745">Clean</span>'}
-        `;
-                externalApisContentEl.appendChild(gsbElement);
+            if (apis.urlscan && apis.urlscan.malicious) {
+                content += `<p><strong>URLScan:</strong> Malicious indicators found.</p>`;
             }
-
-            if (apis.urlscan) {
-                const urlscanElement = document.createElement('div');
-                urlscanElement.style.marginBottom = '8px';
-                urlscanElement.innerHTML = `
-          <strong>URLScan.io:</strong> ${apis.urlscan.is_malicious ?
-                    `<span style="color: #dc3545">Malicious (${apis.urlscan.categories?.join(', ') || 'unknown'})</span>` :
-                    '<span style="color: #28a745">Clean</span>'}
-        `;
-                externalApisContentEl.appendChild(urlscanElement);
+            if (apis.abuseipdb && apis.abuseipdb.abuseConfidenceScore) {
+                content += `<p><strong>AbuseIPDB:</strong> Abuse confidence score of ${apis.abuseipdb.abuseConfidenceScore}%.</p>`;
             }
-
-            if (apis.openphish) {
-                const openphishElement = document.createElement('div');
-                openphishElement.style.marginBottom = '8px';
-                openphishElement.innerHTML = `
-          <strong>OpenPhish:</strong> ${apis.openphish.is_malicious ?
-                    `<span style="color: #dc3545">Listed as phishing site</span>` :
-                    '<span style="color: #28a745">Not listed</span>'}
-        `;
-                externalApisContentEl.appendChild(openphishElement);
+            if (content) {
+                externalApisContentEl.innerHTML = content;
+                externalApisEl.style.display = 'block';
             }
-
-            if (apis.abuseipdb) {
-                const abuseipdbElement = document.createElement('div');
-                abuseipdbElement.style.marginBottom = '8px';
-                abuseipdbElement.innerHTML = `
-          <strong>AbuseIPDB:</strong> ${apis.abuseipdb.is_malicious ?
-                    `<span style="color: #dc3545">Malicious (Score: ${apis.abuseipdb.confidence_score}%)</span>` :
-                    '<span style="color: #28a745">No abuse reports</span>'}
-        `;
-                externalApisContentEl.appendChild(abuseipdbElement);
-            }
-
-            if (apis.emailrep) {
-                const emailrepElement = document.createElement('div');
-                emailrepElement.style.marginBottom = '8px';
-                emailrepElement.innerHTML = `
-          <strong>EmailRep:</strong> ${apis.emailrep.is_malicious ?
-                    `<span style="color: #dc3545">Suspicious (${apis.emailrep.reputation || 'unknown reputation'})</span>` :
-                    '<span style="color: #28a745">Good reputation</span>'}
-        `;
-                externalApisContentEl.appendChild(emailrepElement);
-            }
-            externalApisEl.style.display = 'block';
         }
 
-        if (response.modelExplanation && response.modelExplanation.length > 0) {
-            modelExplanationContentEl.innerHTML = '';
-            response.modelExplanation.forEach(item => {
-                const explanationElement = document.createElement('div');
-                explanationElement.style.marginBottom = '4px';
-                explanationElement.innerHTML = `<strong>${item.feature}</strong>: ${item.weight.toFixed(4)}`;
-                modelExplanationContentEl.appendChild(explanationElement);
-            });
-            modelExplanationEl.style.display = 'block';
-        } else if (response.features || (response.api_results && response.api_results.features)) {
-            const features = response.features || (response.api_results ? response.api_results.features : null) || {};
-            modelExplanationContentEl.innerHTML = generateFeatureExplanation(features);
+        // Display model explanation
+        if (response.model_prediction && response.model_prediction.message) {
+            modelExplanationContentEl.textContent = response.model_prediction.message;
             modelExplanationEl.style.display = 'block';
         }
+
+        detailsBtn.addEventListener('click', () => {
+            const isHidden = threatDetailsEl.style.display === 'none';
+            threatDetailsEl.style.display = isHidden ? 'block' : 'none';
+            certAnalysisEl.style.display = isHidden ? 'block' : 'none';
+            externalApisEl.style.display = isHidden ? 'block' : 'none';
+            modelExplanationEl.style.display = isHidden ? 'block' : 'none';
+            detailsBtn.textContent = isHidden ? '🔼 Hide Details' : '🔍 View Details';
+        });
     }
 
-    function checkUrl(url, tabId) {
+    function checkUrl(url) {
         spinnerEl.style.display = 'block';
         statusEl.textContent = 'Checking...';
         confidenceEl.textContent = 'Analyzing...';
